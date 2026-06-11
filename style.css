@@ -599,8 +599,75 @@ body {
 }
 
 /* Hide custom cursor on touch screens */
-@media (pointer: coarse) {
-    .custom-cursor {
-        display: none !important;
-    }
 }
+
+/* Ruler Button styles */
+.ruler-btn {
+    background-color: #111111;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    outline: none;
+    gap: 6px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.ruler-btn svg {
+    transition: transform 0.2s ease;
+}
+
+.ruler-btn:hover {
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.15);
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.ruler-btn:hover svg {
+    transform: rotate(-10deg);
+}
+
+.ruler-btn.active {
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
+    color: #FFFFFF;
+    box-shadow: 0 0 10px rgba(0, 102, 255, 0.3);
+}
+
+/* Custom cursor ruler mode crosshair */
+.custom-cursor.ruler-mode {
+    width: 20px !important;
+    height: 20px !important;
+    border-radius: 0 !important;
+    border: none !important;
+    background: none !important;
+}
+
+.custom-cursor.ruler-mode::before,
+.custom-cursor.ruler-mode::after {
+    content: '';
+    position: absolute;
+    background-color: var(--accent-color);
+    box-shadow: 0 0 4px var(--accent-color);
+}
+
+.custom-cursor.ruler-mode::before {
+    top: 9px;
+    left: 0;
+    width: 20px;
+    height: 2px;
+}
+
+.custom-cursor.ruler-mode::after {
+    top: 0;
+    left: 9px;
+    width: 2px;
+    height: 20px;
+}
+
