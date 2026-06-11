@@ -655,7 +655,7 @@ function updateSelectedStockView(ticker) {
     const resampled = resampleDataset(activeStockData, currentTimeframe);
     
     updateTrendChart(resampled, ticker);
-    updateVolumeChart(resampled);
+    updateMACDChart(resampled);
     
     const N = resampled.length;
     const defaultZoom = getDefaultZoom(N);
@@ -847,8 +847,8 @@ function updateTrendChart(resampled, ticker) {
     });
 }
 
-// Chart 3: Volume Chart
-function updateVolumeChart(resampled) {
+// Chart 3: MACD Chart
+function updateMACDChart(resampled) {
     const ctx = document.getElementById('volumeChart').getContext('2d');
     
     if (volumeChart) {
@@ -856,26 +856,67 @@ function updateVolumeChart(resampled) {
         volumeChart = null;
     }
     
-    const volumeData = resampled.map(item => ({
-        x: new Date(item.date).getTime(),
-        y: item.volume
+    // Calculate MACD values
+    const macdData = calculateMACD(resampled);
+    
+    const dates = resampled.map(item => new Date(item.date).getTime());
+    
+    const histogramData = resampled.map((item, idx) => ({
+        x: dates[idx],
+        y: macdData.histogram[idx]
     }));
-    const barColors = resampled.map(item => item.warna_volume || '#9CA3AF');
+    
+    const macdLineData = resampled.map((item, idx) => ({
+        x: dates[idx],
+        y: macdData.macdLine[idx]
+    }));
+    
+    const signalLineData = resampled.map((item, idx) => ({
+        x: dates[idx],
+        y: macdData.signalLine[idx]
+    }));
+    
+    const barColors = macdData.histogram.map(val => val >= 0 ? '#26A69A' : '#EF5350');
     
     const datasets = [
         {
-            label: 'Volume Perdagangan',
-            data: volumeData,
+            type: 'line',
+            label: 'MACD Line',
+            data: macdLineData,
+            borderColor: '#FFFFFF',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            fill: false,
+            tension: 0.1,
+            order: 1
+        },
+        {
+            type: 'line',
+            label: 'Signal Line',
+            data: signalLineData,
+            borderColor: '#3B82F6',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            fill: false,
+            tension: 0.1,
+            order: 2
+        },
+        {
+            type: 'bar',
+            label: 'MACD Histogram',
+            data: histogramData,
             backgroundColor: barColors,
             borderColor: barColors,
             borderWidth: 1,
             barPercentage: 0.85,
-            categoryPercentage: 0.95
+            categoryPercentage: 0.95,
+            order: 3
         }
     ];
     
     volumeChart = new Chart(ctx, {
-        type: 'bar',
         data: { datasets: datasets },
         options: {
             responsive: true,
@@ -908,7 +949,13 @@ function updateVolumeChart(resampled) {
                         }
                     }
                 },
-                legend: { display: false },
+                legend: {
+                    display: true,
+                    labels: {
+                        color: '#9CA3AF',
+                        font: { family: 'Inter', size: 10 }
+                    }
+                },
                 tooltip: {
                     backgroundColor: '#141A21',
                     borderColor: '#2A3441',
@@ -919,7 +966,9 @@ function updateVolumeChart(resampled) {
                             let label = context.dataset.label || '';
                             if (label) label += ': ';
                             if (context.parsed.y !== null) {
-                                label += context.parsed.y.toLocaleString('id-ID') + ' lembar';
+                                const val = context.parsed.y;
+                                const sign = val >= 0 ? '+' : '';
+                                label += sign + val.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                             }
                             return label;
                         }
@@ -935,16 +984,12 @@ function updateVolumeChart(resampled) {
                     ticks: { color: '#9CA3AF', font: { family: 'Inter', size: 10 }, maxTicksLimit: 8 }
                 },
                 y: {
-                    min: 0,
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawTicks: false },
                     ticks: {
                         color: '#9CA3AF',
                         font: { family: 'Inter', size: 10 },
                         callback: function(value) {
-                            if (value >= 1e9) return (value / 1e9).toFixed(1) + ' B';
-                            if (value >= 1e6) return (value / 1e6).toFixed(1) + ' M';
-                            if (value >= 1e3) return (value / 1e3).toFixed(1) + ' K';
-                            return value;
+                            return value.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
                         }
                     },
                     afterFit: function(scaleInstance) {
@@ -1010,39 +1055,50 @@ function generateInsights(ticker, stockData) {
         trBadgeEl.className = `badge ${trendBadgeClass}`;
     }
     
-    // 2. Determine Volume Badge & Text
-    const nPeriods = Math.min(stockData.length, 20);
-    let totalVolume = 0;
-    for (let i = stockData.length - nPeriods; i < stockData.length; i++) {
-        totalVolume += stockData[i].volume;
-    }
-    const avgVolume20 = totalVolume / nPeriods;
+    // 2. Determine MACD Momentum Badge & Text
+    const macdData = calculateMACD(stockData);
+    const len = stockData.length;
+    const latestMacd = macdData.macdLine[len - 1];
+    const latestSignal = macdData.signalLine[len - 1];
+    const latestHist = macdData.histogram[len - 1];
     
-    let volumeBadge = "Volume Normal";
-    let volumeBadgeClass = "badge-neutral";
-    let volumeInsightText = "";
+    const prevMacd = macdData.macdLine[len - 2] || latestMacd;
+    const prevSignal = macdData.signalLine[len - 2] || latestSignal;
+    const prevHist = macdData.histogram[len - 2] || latestHist;
     
-    // Calculate percentage difference of latest volume vs 20-period average volume
-    const pctDiff = avgVolume20 !== 0 ? ((latestVolume - avgVolume20) / avgVolume20 * 100) : 0;
+    let momentumBadge = "Momentum Neutral";
+    let momentumBadgeClass = "badge-neutral";
+    let momentumInsightText = "";
     
-    if (pctDiff > 20) {
-        volumeBadge = "Volume Tinggi";
-        volumeBadgeClass = "badge-bullish";
-        volumeInsightText = `Volume perdagangan terbaru sebesar <strong>${latestVolume.toLocaleString('id-ID')} lembar</strong> meningkat signifikan (<strong>+${pctDiff.toFixed(1)}%</strong>) dibanding rata-rata 20 periode terakhir (<strong>${Math.round(avgVolume20).toLocaleString('id-ID')} lembar</strong>), menunjukkan peningkatan aktivitas pasar.`;
-    } else if (pctDiff < -20) {
-        volumeBadge = "Volume Rendah";
-        volumeBadgeClass = "badge-bearish";
-        volumeInsightText = `Volume perdagangan terbaru sebesar <strong>${latestVolume.toLocaleString('id-ID')} lembar</strong> menurun signifikan (<strong>${pctDiff.toFixed(1)}%</strong>) dibanding rata-rata 20 periode terakhir (<strong>${Math.round(avgVolume20).toLocaleString('id-ID')} lembar</strong>), menunjukkan penurunan aktivitas pasar (transaksi cenderung sepi).`;
+    if (latestMacd > latestSignal) {
+        momentumBadge = "Momentum Bullish";
+        momentumBadgeClass = "badge-bullish";
+        momentumInsightText = `Indikator MACD menunjukkan momentum <span class="text-success">bullish</span>. MACD Line (Rp ${latestMacd.toLocaleString('id-ID', { maximumFractionDigits: 2 })}) berada di atas Signal Line (Rp ${latestSignal.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), yang mengindikasikan kekuatan tren naik. `;
     } else {
-        volumeBadge = "Volume Normal";
-        volumeBadgeClass = "badge-neutral";
-        volumeInsightText = `Volume perdagangan terbaru sebesar <strong>${latestVolume.toLocaleString('id-ID')} lembar</strong> bergerak stabil (<strong>${pctDiff >= 0 ? '+' : ''}${pctDiff.toFixed(1)}%</strong>) dekat rata-rata 20 periode terakhir (<strong>${Math.round(avgVolume20).toLocaleString('id-ID')} lembar</strong>), mencerminkan aktivitas pasar yang wajar.`;
+        momentumBadge = "Momentum Bearish";
+        momentumBadgeClass = "badge-bearish";
+        momentumInsightText = `Indikator MACD menunjukkan momentum <span class="text-danger">bearish</span>. MACD Line (Rp ${latestMacd.toLocaleString('id-ID', { maximumFractionDigits: 2 })}) berada di bawah Signal Line (Rp ${latestSignal.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), yang mengindikasikan tekanan turun. `;
+    }
+    
+    // Add Histogram description
+    if (latestHist > 0) {
+        if (latestHist > prevHist) {
+            momentumInsightText += `Histogram MACD bernilai positif dan menguat (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), menunjukkan akselerasi kekuatan beli.`;
+        } else {
+            momentumInsightText += `Histogram MACD bernilai positif namun mulai melemah (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), mengindikasikan perlambatan momentum beli.`;
+        }
+    } else {
+        if (latestHist < prevHist) {
+            momentumInsightText += `Histogram MACD bernilai negatif dan memburuk (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), menunjukkan akselerasi kekuatan jual.`;
+        } else {
+            momentumInsightText += `Histogram MACD bernilai negatif namun mulai mengecil/membaik (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), mengindikasikan pelemahan momentum jual (potensi pembalikan arah naik).`;
+        }
     }
     
     const momBadgeEl = document.getElementById('stock-volume-badge');
     if (momBadgeEl) {
-        momBadgeEl.textContent = volumeBadge;
-        momBadgeEl.className = `badge ${volumeBadgeClass}`;
+        momBadgeEl.textContent = momentumBadge;
+        momBadgeEl.className = `badge ${momentumBadgeClass}`;
     }
     
     // 3. Performance vs IHSG Text
@@ -1057,28 +1113,26 @@ function generateInsights(ticker, stockData) {
     
     // 4. Determine Confirmation Text
     let confirmationText = "";
-    const isPriceUp = latest.close > prev.close;
-    const isPriceDown = latest.close < prev.close;
+    const isPriceBullish = close > ma50;
+    const isMacdBullish = latestMacd > latestSignal;
     
-    if (isPriceUp && pctDiff > 20) {
-        confirmationText = `Kenaikan harga yang didukung oleh volume transaksi tinggi mengindikasikan akumulasi beli yang solid dari pelaku pasar, memberikan konfirmasi bahwa tren kenaikan harga ini memiliki fondasi yang kuat.`;
-    } else if (isPriceUp && pctDiff < -20) {
-        confirmationText = `Kenaikan harga terjadi di tengah volume transaksi yang rendah, mengindikasikan lemahnya minat beli dari pasar. Kenaikan harga ini rentan mengalami koreksi karena kurang didukung aktivitas transaksi yang kuat.`;
-    } else if (isPriceDown && pctDiff > 20) {
-        confirmationText = `Penurunan harga yang disertai lonjakan volume transaksi mengindikasikan tekanan jual yang tinggi (distribusi aktif), memberikan konfirmasi bahwa tren penurunan harga saat ini cukup kuat.`;
-    } else if (isPriceDown && pctDiff < -20) {
-        confirmationText = `Penurunan harga terjadi dengan volume transaksi yang rendah, menunjukkan tekanan jual yang relatif terbatas dan mengindikasikan potensi konsolidasi atau koreksi teknikal sementara.`;
+    if (isPriceBullish && isMacdBullish) {
+        confirmationText = `Pergerakan harga yang berada di atas MA50 terkonfirmasi oleh MACD Crossover Bullish. Ini menunjukkan tren kenaikan harga jangka menengah didukung oleh momentum beli yang solid, memberikan indikasi kelanjutan tren naik.`;
+    } else if (isPriceBullish && !isMacdBullish) {
+        confirmationText = `Meskipun harga saham masih berada di atas MA50 (tren naik), indikator MACD menunjukkan crossover bearish. Hal ini mengindikasikan adanya perlambatan momentum atau potensi divergensi negatif, memperingatkan pelaku pasar akan kemungkinan terjadinya koreksi harga jangka pendek.`;
+    } else if (!isPriceBullish && !isMacdBullish) {
+        confirmationText = `Pergerakan harga yang berada di bawah MA50 terkonfirmasi oleh MACD Crossover Bearish. Ini menunjukkan tren penurunan harga jangka menengah didukung oleh momentum jual yang solid, memberikan indikasi kelanjutan tren turun.`;
     } else {
-        confirmationText = `Pergerakan harga terkini didukung oleh volume transaksi yang normal, menunjukkan keseimbangan aktivitas antara pembeli dan penjual tanpa adanya dominasi transaksi yang mencolok.`;
+        confirmationText = `Meskipun harga saham berada di bawah MA50 (tren turun), indikator MACD menunjukkan crossover bullish. Hal ini mengindikasikan adanya pelemahan tekanan jual atau potensi pembalikan arah tren (rebound) jangka pendek.`;
     }
     
     // Assemble final bullet points
     let htmlContent = `
-        <p>Berdasarkan analisis data penutupan historis dan aktivitas transaksi untuk saham <strong>${TICKER_NAMES[ticker]} (${ticker})</strong> dalam rentang waktu yang ditampilkan, berikut rangkuman analisis tren dan volumenya:</p>
+        <p>Berdasarkan analisis data penutupan historis dan momentum MACD untuk saham <strong>${TICKER_NAMES[ticker]} (${ticker})</strong> dalam rentang waktu yang ditampilkan, berikut rangkuman analisis tren dan momentumnya:</p>
         <ul>
             <li><strong>Performa:</strong> ${relativePerformanceText}</li>
             <li><strong>Tren:</strong> Saham ${ticker} saat ini menunjukkan tren ${trendInsightText} ${shortTermTrend}</li>
-            <li><strong>Volume:</strong> ${volumeInsightText}</li>
+            <li><strong>Momentum:</strong> ${momentumInsightText}</li>
             <li><strong>Konfirmasi:</strong> ${confirmationText}</li>
         </ul>
         <p style="margin-top: 16px; font-size: 0.9rem; color: var(--text-secondary); font-style: italic;">
@@ -1508,5 +1562,45 @@ function clearRuler() {
     if (trendChart) {
         trendChart.update('none');
     }
+}
+
+// MACD Technical Indicator Calculations
+function calculateEMA(values, period) {
+    const ema = [];
+    if (values.length === 0) return ema;
+    
+    const k = 2 / (period + 1);
+    let currentEma = values[0];
+    ema.push(currentEma);
+    
+    for (let i = 1; i < values.length; i++) {
+        currentEma = (values[i] * k) + (currentEma * (1 - k));
+        ema.push(currentEma);
+    }
+    return ema;
+}
+
+function calculateMACD(resampled) {
+    const closes = resampled.map(item => item.close);
+    const ema12 = calculateEMA(closes, 12);
+    const ema26 = calculateEMA(closes, 26);
+    
+    const macdLine = [];
+    for (let i = 0; i < closes.length; i++) {
+        macdLine.push(ema12[i] - ema26[i]);
+    }
+    
+    const signalLine = calculateEMA(macdLine, 9);
+    
+    const histogram = [];
+    for (let i = 0; i < closes.length; i++) {
+        histogram.push(macdLine[i] - signalLine[i]);
+    }
+    
+    return {
+        macdLine,
+        signalLine,
+        histogram
+    };
 }
 
