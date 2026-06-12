@@ -26,7 +26,7 @@ def main():
     
     # We fetch from early 2016 to ensure we have historical data from 2016-06-01
     # and MA50 calculations are fully populated starting 2016-06-01.
-    end_date = datetime.date.today()
+    end_date = datetime.date.today() + datetime.timedelta(days=1)
     start_date = datetime.date(2016, 1, 1)
     
     prices_data = {}

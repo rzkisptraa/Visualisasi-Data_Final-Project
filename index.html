@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,24 +8,27 @@
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
     <!-- Chart.js & Zoom Plugin CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
     <!-- Luxon + Date Adapter + Financial (Candlestick) Plugin -->
     <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.0/dist/chartjs-adapter-luxon.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.0/dist/chartjs-adapter-luxon.umd.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div class="app-container">
         <!-- Header -->
         <header class="app-header">
             <div class="header-content">
-                <span class="badge badge-primary">Analisis Pasar Saham</span>
                 <h1 id="main-title">Analisis Performa Saham Indonesia terhadap IHSG</h1>
-                <p class="subtitle" id="sub-title">Visualisasi Relative Performance, Tren, dan Momentum Menggunakan MA20, MA50, dan Stochastic Oscillator</p>
             </div>
             <div class="header-meta">
                 <span class="meta-label">Pembaruan Terakhir:</span>
@@ -39,7 +43,11 @@
                 <div class="kpi-header">
                     <span class="kpi-title">IHSG Saat Ini</span>
                     <div class="kpi-icon-container">
-                        <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+                        <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                        </svg>
                     </div>
                 </div>
                 <div class="kpi-value" id="kpi-ihsg-val">0</div>
@@ -51,7 +59,12 @@
                 <div class="kpi-header">
                     <span class="kpi-title">Status Pasar</span>
                     <div class="kpi-icon-container">
-                        <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+                            </path>
+                        </svg>
                     </div>
                 </div>
                 <div class="kpi-value" id="kpi-status-val">-</div>
@@ -63,7 +76,12 @@
                 <div class="kpi-header">
                     <span class="kpi-title">Top Outperformer</span>
                     <div class="kpi-icon-container text-success">
-                        <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path></svg>
+                        <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z">
+                            </path>
+                        </svg>
                     </div>
                 </div>
                 <div class="kpi-value text-success" id="kpi-outperformer-val">-</div>
@@ -75,11 +93,59 @@
                 <div class="kpi-header">
                     <span class="kpi-title">Top Underperformer</span>
                     <div class="kpi-icon-container text-danger">
-                        <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                        <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                            </path>
+                        </svg>
                     </div>
                 </div>
                 <div class="kpi-value text-danger" id="kpi-underperformer-val">-</div>
                 <div class="kpi-footer">Performa Terendah vs IHSG</div>
+            </div>
+        </section>
+
+        <!-- Side-by-Side IHSG Trend Chart & Stock Performance Heatmap -->
+        <section class="overview-analytics-section" aria-label="IHSG Status and Stock Heatmap">
+            <div class="overview-grid">
+                <!-- Left: Simple IHSG Chart vs MA50 (1/4 width) -->
+                <div class="card overview-chart-card">
+                    <div class="card-header">
+                        <div>
+                            <h2>Status Tren IHSG (vs MA50)</h2>
+                            <p class="card-subtitle">Menentukan Status Pasar: Bullish/Bearish</p>
+                        </div>
+                    </div>
+                    <div class="overview-chart-container">
+                        <canvas id="ihsgTrendChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Right: Stock Heatmap (3/4 width) -->
+                <div class="card overview-heatmap-card">
+                    <div class="card-header">
+                        <div>
+                            <h2>Heatmap Performa Saham</h2>
+                            <p class="card-subtitle">Perubahan imbal hasil harga saham dari awal hingga akhir periode
+                                terpilih</p>
+                        </div>
+                        <div class="filter-group">
+                            <span class="filter-label">Timeframe:</span>
+                            <div class="timeframe-buttons" id="heatmap-timeframe-selector">
+                                <button class="tf-btn active" data-tf="daily">Daily</button>
+                                <button class="tf-btn" data-tf="weekly">Weekly</button>
+                                <button class="tf-btn" data-tf="monthly">Monthly</button>
+                                <button class="tf-btn" data-tf="yearly">Yearly</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="heatmap-wrapper">
+                        <div id="stock-heatmap" class="heatmap-container">
+                            <!-- Stock blocks will be rendered here dynamically -->
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -89,8 +155,10 @@
                 <div class="card-header">
                     <div>
                         <h2>Performa Relatif Saham terhadap IHSG</h2>
-                        <p class="card-subtitle">Perbandingan imbal hasil kumulatif saham terhadap IHSG (Skala Persentase, Dimulai dari 0%)</p>
-                        <p class="interaction-instruction">Klik & Seret untuk Geser | Scroll untuk Zoom | Klik 2x untuk Reset</p>
+                        <p class="card-subtitle">Perbandingan imbal hasil kumulatif saham terhadap IHSG (Skala
+                            Persentase, Dimulai dari 0%)</p>
+                        <p class="interaction-instruction">Klik & Seret untuk Geser | Scroll untuk Zoom | Klik 2x untuk
+                            Reset</p>
                     </div>
                     <div class="filter-group">
                         <span class="filter-label">Timeframe:</span>
@@ -144,11 +212,15 @@
                     <div class="card-header">
                         <div>
                             <h2>Analisis Tren Harga Saham <span class="selected-stock-ticker"></span></h2>
-                            <p class="card-subtitle">Harga Penutupan Historis, Rata-rata Bergerak 20 Hari (MA20), dan 50 Hari (MA50)</p>
-                            <p class="interaction-instruction">Klik & Seret untuk Geser | Scroll untuk Zoom | Klik 2x untuk Reset</p>
+                            <p class="card-subtitle">Harga Penutupan Historis, Rata-rata Bergerak 20 Hari (MA20), dan 50
+                                Hari (MA50)</p>
+                            <p class="interaction-instruction">Klik & Seret untuk Geser | Scroll untuk Zoom | Klik 2x
+                                untuk Reset</p>
                         </div>
-                        <button id="ruler-tool-btn" class="ruler-btn" title="Pengukur Rentang Tanggal & Persentase Harga (Ruler)">
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <button id="ruler-tool-btn" class="ruler-btn"
+                            title="Pengukur Rentang Tanggal & Persentase Harga (Ruler)">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="5" y1="19" x2="19" y2="5"></line>
                                 <line x1="5" y1="14" x2="10" y2="19"></line>
                                 <line x1="9" y1="10" x2="14" y2="15"></line>
@@ -167,8 +239,10 @@
                     <div class="card-header">
                         <div>
                             <h2>Analisis Momentum MACD Saham <span class="selected-stock-ticker"></span></h2>
-                            <p class="card-subtitle">Moving Average Convergence Divergence (MACD) digunakan untuk mengidentifikasi kekuatan dan arah momentum tren harga saham.</p>
-                            <p class="interaction-instruction">Klik & Seret untuk Geser | Scroll untuk Zoom | Klik 2x untuk Reset</p>
+                            <p class="card-subtitle">Moving Average Convergence Divergence (MACD) digunakan untuk
+                                mengidentifikasi kekuatan dan arah momentum tren harga saham.</p>
+                            <p class="interaction-instruction">Klik & Seret untuk Geser | Scroll untuk Zoom | Klik 2x
+                                untuk Reset</p>
                         </div>
                     </div>
                     <div class="chart-container">
@@ -185,10 +259,16 @@
             <div class="card insights-card">
                 <div class="insights-header">
                     <div class="insights-header-title">
-                        <svg class="insights-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 01-2 2h0a2 2 0 01-2-2v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                        <svg class="insights-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 01-2 2h0a2 2 0 01-2-2v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z">
+                            </path>
+                        </svg>
                         <h2>Ringkasan Analisis <span class="selected-stock-ticker-full"></span></h2>
                     </div>
                     <div class="stock-badge-container">
+                        <span id="insights-timeframe-note" class="badge badge-info">DAILY</span>
                         <span id="stock-trend-badge" class="badge">Bullish</span>
                         <span id="stock-volume-badge" class="badge">Momentum Neutral</span>
                     </div>
@@ -202,14 +282,12 @@
         <!-- Footer -->
         <footer class="app-footer">
             <div class="footer-left">
-                <p>© 2026 Indonesia Market Stock Dashboard. Hak Cipta Dilindungi.</p>
-            </div>
-            <div class="footer-right">
-                <p><strong>Pernyataan Penyangkalan (Disclaimer):</strong> Dashboard ini bukan merupakan platform trading atau penasihat investasi keuangan. Dashboard ini hanya digunakan untuk visualisasi dan interpretasi data historis saham.</p>
+                <p>Indonesia Market Stock Dashboard.</p>
             </div>
         </footer>
     </div>
     <div class="custom-cursor"></div>
     <script src="app.js"></script>
 </body>
+
 </html>

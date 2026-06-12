@@ -5,13 +5,17 @@ let metaData = null;
 let relativeChart = null;
 let trendChart = null;
 let volumeChart = null;
+let ihsgTrendChart = null; // simple IHSG MA50 chart
+let activeScalingChart = null; // track the chart being dragged/scaled on x-axis
 
 // Timeframe state
 let currentTimeframe = 'daily'; // controls trendChart & volumeChart
 let relativeTimeframe = 'daily'; // controls relativeChart
+let heatmapTimeframe = 'daily'; // controls simple IHSG & stock heatmap
 
 // Sync lock to prevent recursive updates between linked charts
 let isSyncing = false;
+let isDetailChartAnimating = false;
 
 // Ruler measurement tool state
 let rulerState = {
@@ -21,6 +25,21 @@ let rulerState = {
     currentMousePoint: null,
     isMeasuring: false
 };
+
+// Crosshair state for synchronized charts
+let crosshairState = {
+    xVal: null,
+    yValTrend: null,
+    yValVolume: null,
+    activeChartId: null
+};
+
+// Pre-cached sorted timestamps for O(log n) snap — filled by updateTrendChart
+let _trendTimestamps = [];
+
+// RAF handle to throttle crosshair redraws to 60fps
+let _crosshairRafId = null;
+
 
 // Ticker Names Map for display
 const TICKER_NAMES = {
@@ -53,8 +72,8 @@ async function initDashboard() {
     try {
         // Fetch JSON files
         const [pricesRes, metaRes] = await Promise.all([
-            fetch('data/prices.json'),
-            fetch('data/meta.json')
+            fetch('data/prices.json?t=' + Date.now()),
+            fetch('data/meta.json?t=' + Date.now())
         ]);
         
         if (!pricesRes.ok || !metaRes.ok) {
@@ -95,9 +114,9 @@ async function initDashboard() {
                 tfSelector.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
                 currentTimeframe = e.target.dataset.tf;
-                
+
                 const currentStock = document.getElementById('stock-select').value;
-                updateSelectedStockView(currentStock);
+                transitionDetailCharts(() => updateSelectedStockView(currentStock));
             });
         });
 
@@ -108,10 +127,23 @@ async function initDashboard() {
                 relTfSelector.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
                 relativeTimeframe = e.target.dataset.tf;
-                
-                updateRelativeChart();
+
+                transitionRelativeChart(() => updateRelativeChart());
             });
         });
+        
+        // Setup heatmap & simple IHSG timeframe button selector (locks them together)
+        const heatTfSelector = document.getElementById('heatmap-timeframe-selector');
+        if (heatTfSelector) {
+            heatTfSelector.querySelectorAll('.tf-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    heatTfSelector.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+                    e.target.classList.add('active');
+                    heatmapTimeframe = e.target.dataset.tf;
+                    updateOverviewSection();
+                });
+            });
+        }
         
         // Setup initial view
         updateAllViews();
@@ -120,9 +152,12 @@ async function initDashboard() {
         setupRulerToggle();
         setupRulerEvents();
         
-        // Add dropdown change listener
+        // Setup crosshair event handlers
+        setupCrosshairEvents();
+        
+        // Add dropdown change listener — transition detail charts on stock switch
         stockSelect.addEventListener('change', (e) => {
-            updateSelectedStockView(e.target.value);
+            transitionDetailCharts(() => updateSelectedStockView(e.target.value));
         });
         
         // Add double-click listeners on canvases for zoom reset
@@ -165,74 +200,125 @@ function setupMetadata() {
     document.getElementById('last-update-time').textContent = metaData.last_update;
 }
 
-// Helper for count up animation using requestAnimationFrame
-function animateValue(elementId, start, end, duration, decimalPlaces = 0, prefix = "", suffix = "") {
-    const obj = document.getElementById(elementId);
+/// Easing function: ease-out cubic (fast start, decelerates to final value)
+function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+// Count-up animation using requestAnimationFrame with ease-out easing
+function animateValue(target, start, end, duration, decimalPlaces, prefix, suffix) {
+    if (decimalPlaces === undefined) decimalPlaces = 0;
+    if (prefix === undefined) prefix = "";
+    if (suffix === undefined) suffix = "";
+    
+    const obj = (typeof target === 'string') ? document.getElementById(target) : target;
     if (!obj) return;
-    
-    let startTimestamp = null;
+
     const isNegative = end < 0;
-    const absoluteEnd = Math.abs(end);
+    const absoluteEnd   = Math.abs(end);
     const absoluteStart = Math.abs(start);
-    
+
+    let startTimestamp = null;
+
     const step = (timestamp) => {
         if (!startTimestamp) startTimestamp = timestamp;
-        const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-        const currentVal = progress * (absoluteEnd - absoluteStart) + absoluteStart;
-        
-        // Apply decimal places and format
-        const formattedVal = currentVal.toFixed(decimalPlaces);
-        const displayVal = parseFloat(formattedVal).toLocaleString('id-ID', {
+        const elapsed  = timestamp - startTimestamp;
+        const rawProgress = Math.min(elapsed / duration, 1);
+        const easedProgress = easeOutCubic(rawProgress);  // fast-start, slow-end
+        const currentVal = absoluteStart + easedProgress * (absoluteEnd - absoluteStart);
+
+        const displayVal = currentVal.toLocaleString('id-ID', {
             minimumFractionDigits: decimalPlaces,
             maximumFractionDigits: decimalPlaces
         });
-        
-        // Re-apply negative sign if needed
-        const sign = isNegative ? "-" : (suffix === "%" && end > 0 ? "+" : "");
+        const sign = isNegative ? "-" : (suffix.includes("%") && end > 0 ? "+" : "");
         obj.textContent = prefix + sign + displayVal + suffix;
-        
-        if (progress < 1) {
+
+        if (rawProgress < 1) {
             window.requestAnimationFrame(step);
         }
     };
-    
+
     window.requestAnimationFrame(step);
 }
 
-// Setup KPIs with animations
+// Force-restart a CSS animation on an element (works on every call, including refresh)
+function triggerCountup(el, delayMs) {
+    if (!el) return;
+    delayMs = delayMs || 0;
+    // Remove class, force reflow so browser resets the animation, then re-add
+    el.classList.remove('kpi-countup');
+    void el.offsetWidth; // <-- forces browser to flush style recalculation
+    el.style.animationDelay = delayMs + 'ms';
+    el.classList.add('kpi-countup');
+}
+
+/// Setup KPIs with count-up animations — restarts on every page load / refresh
 function setupKPIs() {
-    // KPI 1: IHSG Current Close (Format: IDR format with 2 decimals)
-    animateValue('kpi-ihsg-val', 0, metaData.ihsg_current, 1000, 2);
-    
-    // KPI 2: Status Pasar
-    const statusVal = document.getElementById('kpi-status-val');
-    const statusDesc = document.getElementById('kpi-status-desc');
-    statusVal.textContent = metaData.status_pasar;
-    
-    if (metaData.status_pasar === 'Bullish') {
-        statusVal.className = 'kpi-value text-success';
-        statusDesc.textContent = 'IHSG di atas MA50';
-    } else {
-        statusVal.className = 'kpi-value text-danger';
-        statusDesc.textContent = 'IHSG di bawah MA50';
+    const COUNT_DURATION = 3750; // ms  (5× slower than original 750ms)
+    const CSS_ANIM_MS    = 600;  // match .kpi-countup animation duration
+
+    // Stagger delays per card (CSS pop-in start offset)
+    const STAGGER = [0, 150, 300, 450];
+
+    // Helper: pop-in CSS then start count-up after the CSS anim is visible
+    function popAndCount(elId, targetVal, decimals, prefix, suffix, staggerIdx) {
+        prefix = prefix || '';
+        suffix = suffix || '';
+        const el = document.getElementById(elId);
+        const cssDelay   = STAGGER[staggerIdx];          // when CSS anim starts
+        const countStart = cssDelay + CSS_ANIM_MS;       // count-up starts after anim shows element
+        triggerCountup(el, cssDelay);
+        setTimeout(function() {
+            animateValue(elId, 0, targetVal, COUNT_DURATION, decimals, prefix, suffix);
+        }, countStart);
     }
-    
-    // KPI 3: Top Outperformer
-    const topOut = metaData.top_outperformer;
-    const topOutVal = document.getElementById('kpi-outperformer-val');
-    topOutVal.innerHTML = `${topOut.ticker} <span id="top-out-pct"></span>`;
-    animateValue('top-out-pct', 0, topOut.return, 1000, 1, "(", "%)");
-    
-    // KPI 4: Top Underperformer
-    const topUnder = metaData.top_underperformer;
-    const topUnderVal = document.getElementById('kpi-underperformer-val');
-    topUnderVal.innerHTML = `${topUnder.ticker} <span id="top-under-pct"></span>`;
-    animateValue('top-under-pct', 0, topUnder.return, 1000, 1, "(", "%)");
+
+    // KPI 1: IHSG Current Close
+    popAndCount('kpi-ihsg-val', metaData.ihsg_current, 2, '', '', 0);
+
+    // KPI 2: Status Pasar — text label, pop-in only (no count-up)
+    const statusVal  = document.getElementById('kpi-status-val');
+    const statusDesc = document.getElementById('kpi-status-desc');
+    if (statusVal) {
+        statusVal.textContent = metaData.status_pasar;
+        if (metaData.status_pasar === 'Bullish') {
+            statusVal.className = 'kpi-value text-success';
+            if (statusDesc) statusDesc.textContent = 'IHSG di atas MA50';
+        } else {
+            statusVal.className = 'kpi-value text-danger';
+            if (statusDesc) statusDesc.textContent = 'IHSG di bawah MA50';
+        }
+        triggerCountup(statusVal, STAGGER[1]);
+    }
+
+    // KPI 3: Top Outperformer — inner span gets count-up
+    var topOut    = metaData.top_outperformer;
+    var topOutEl  = document.getElementById('kpi-outperformer-val');
+    if (topOutEl) {
+        topOutEl.innerHTML = topOut.ticker + ' <span id="top-out-pct">( 0,0%)</span>';
+        triggerCountup(topOutEl, STAGGER[2]);
+        setTimeout(function() {
+            animateValue('top-out-pct', 0, topOut.return, COUNT_DURATION, 1, '(', '%)');
+        }, STAGGER[2] + CSS_ANIM_MS);
+    }
+
+    // KPI 4: Top Underperformer — inner span gets count-up
+    var topUnder   = metaData.top_underperformer;
+    var topUnderEl = document.getElementById('kpi-underperformer-val');
+    if (topUnderEl) {
+        topUnderEl.innerHTML = topUnder.ticker + ' <span id="top-under-pct">( 0,0%)</span>';
+        triggerCountup(topUnderEl, STAGGER[3]);
+        setTimeout(function() {
+            animateValue('top-under-pct', 0, topUnder.return, COUNT_DURATION, 1, '(', '%)');
+        }, STAGGER[3] + CSS_ANIM_MS);
+    }
 }
 
 // Helper to trigger update for all views
 function updateAllViews() {
     updateRelativeChart();
+    updateOverviewSection();
     const currentStock = document.getElementById('stock-select').value;
     updateSelectedStockView(currentStock);
 }
@@ -304,68 +390,156 @@ function getMondayDate(dateStr) {
 // Helper to determine min and max values of visible data arrays for vertical scaling
 // Handles both plain numbers (index-based axis) and OHLC/line objects ({x, o, h, l, c} or {x, y})
 function autoScaleY(chart) {
-    if (!chart || !chart.scales || !chart.scales.x || !chart.scales.y) return;
+    if (!chart) return;
     
-    const xScale = chart.scales.x;
-    const xMin = xScale.min;
-    const xMax = xScale.max;
+    // Safely ensure chart.options.scales structures exist to avoid errors
+    if (!chart.options) chart.options = {};
+    if (!chart.options.scales) chart.options.scales = {};
+    if (!chart.options.scales.x) chart.options.scales.x = {};
+    if (!chart.options.scales.y) chart.options.scales.y = {};
     
-    let minVal = Infinity;
-    let maxVal = -Infinity;
+    // Prioritize options (target range for update) over current scales (rendered range of previous frame)
+    let xMin = chart.options.scales.x.min !== undefined ? chart.options.scales.x.min : (chart.scales && chart.scales.x ? chart.scales.x.min : undefined);
+    let xMax = chart.options.scales.x.max !== undefined ? chart.options.scales.x.max : (chart.scales && chart.scales.x ? chart.scales.x.max : undefined);
     
-    const isTimeScale = xScale.type === 'time' || xScale.type === 'timeseries';
+    const hasRange = xMin !== undefined && xMax !== undefined && xMin !== null && xMax !== null;
     
-    chart.data.datasets.forEach((dataset, dsIndex) => {
-        if (!chart.isDatasetVisible(dsIndex)) return;
-        
-        dataset.data.forEach((item, idx) => {
-            if (item === null || item === undefined) return;
-            
-            let valMin, valMax;
-            
-            if (isTimeScale) {
-                // For time scales, items are objects like {x, o, h, l, c} or {x, y}
-                const t = item.x;
-                if (t < xMin || t > xMax) return;
-                
-                if (item.o !== undefined && item.h !== undefined && item.l !== undefined && item.c !== undefined) {
-                    // Candlestick data
-                    valMin = item.l;
-                    valMax = item.h;
-                } else if (item.y !== undefined) {
-                    // Line data or Bar data (volume)
-                    valMin = item.y;
-                    valMax = item.y;
-                } else {
-                    return;
-                }
+    // Track min/max values dynamically by Y-axis ID (default is 'y')
+    const boundsByAxis = {};
+    
+    const isTimeScale = chart.options.scales.x && (chart.options.scales.x.type === 'time' || chart.options.scales.x.type === 'timeseries');
+    
+    if (chart.data && chart.data.datasets) {
+        chart.data.datasets.forEach((dataset, dsIndex) => {
+            // Safely check dataset visibility without requiring scales to be fully rendered
+            let isVisible = true;
+            if (chart.isDatasetVisible && typeof chart.isDatasetVisible === 'function' && chart.scales && chart.scales.y) {
+                isVisible = chart.isDatasetVisible(dsIndex);
             } else {
-                // For category scales, items are plain numbers or {y} objects, and checked by index
-                if (idx < xMin || idx > xMax) return;
+                isVisible = dataset.hidden !== true;
+            }
+            if (!isVisible) return;
+            
+            const axisID = dataset.yAxisID || 'y';
+            if (!boundsByAxis[axisID]) {
+                boundsByAxis[axisID] = { min: Infinity, max: -Infinity };
+            }
+            const bounds = boundsByAxis[axisID];
+            
+            const dataArray = dataset.data || [];
+            dataArray.forEach((item, idx) => {
+                if (item === null || item === undefined) return;
                 
-                const val = (typeof item === 'object' && item.y !== undefined) ? item.y : item;
-                if (typeof val !== 'number' || isNaN(val)) return;
-                valMin = val;
-                valMax = val;
+                let valMin, valMax;
+                
+                if (isTimeScale) {
+                    // For time scales, items are objects like {x, o, h, l, c} or {x, y}
+                    const t = item.x;
+                    if (hasRange && (t < xMin || t > xMax)) return;
+                    
+                    if (item.o !== undefined && item.h !== undefined && item.l !== undefined && item.c !== undefined) {
+                        valMin = item.l;
+                        valMax = item.h;
+                    } else if (item.y !== undefined) {
+                        valMin = item.y;
+                        valMax = item.y;
+                    } else {
+                        return;
+                    }
+                } else {
+                    // For category scales, items are plain numbers or {y} objects, and checked by index
+                    if (hasRange && (idx < xMin || idx > xMax)) return;
+                    
+                    const val = (typeof item === 'object' && item.y !== undefined) ? item.y : item;
+                    if (typeof val !== 'number' || isNaN(val)) return;
+                    valMin = val;
+                    valMax = val;
+                }
+                
+                if (valMin === null || valMin === undefined || isNaN(valMin)) return;
+                if (valMax === null || valMax === undefined || isNaN(valMax)) return;
+                
+                if (valMin < bounds.min) bounds.min = valMin;
+                if (valMax > bounds.max) bounds.max = valMax;
+            });
+        });
+    }
+    
+    // Apply Y-axis range limits to each axis config
+    Object.keys(boundsByAxis).forEach(axisID => {
+        const bounds = boundsByAxis[axisID];
+        if (bounds.min !== Infinity && bounds.max !== -Infinity) {
+            if (!chart.options.scales[axisID]) {
+                chart.options.scales[axisID] = {};
             }
             
-            if (valMin < minVal) minVal = valMin;
-            if (valMax > maxVal) maxVal = valMax;
-        });
-    });
-    if (minVal !== Infinity && maxVal !== -Infinity) {
-        if (chart.canvas.id === 'volumeChart') {
-            const maxAbs = Math.max(Math.abs(minVal), Math.abs(maxVal));
-            const finalMax = maxAbs || 1.0;
-            chart.options.scales.y.min = -finalMax * 1.15; // 15% headroom
-            chart.options.scales.y.max = finalMax * 1.15;
-        } else {
-            const range = maxVal - minVal;
-            const padding = range * 0.05 || 1.0;
-            chart.options.scales.y.min = minVal - padding;
-            chart.options.scales.y.max = maxVal + padding;
+            if (chart.canvas && chart.canvas.id === 'volumeChart') {
+                const maxAbs = Math.max(Math.abs(bounds.min), Math.abs(bounds.max));
+                const finalMax = maxAbs || 1.0;
+                chart.options.scales[axisID].min = -finalMax * 1.15; // 15% headroom
+                chart.options.scales[axisID].max = finalMax * 1.15;
+            } else {
+                const range = bounds.max - bounds.min;
+                const padding = range * 0.05 || 1.0;
+                chart.options.scales[axisID].min = bounds.min - padding;
+                chart.options.scales[axisID].max = bounds.max + padding;
+            }
         }
-    }
+    });
+}
+
+// ── Chart Transition Helpers ─────────────────────────────────────────────────
+// Fades out Chart 2 (trendChart) + Chart 3 (volumeChart), rebuilds them,
+// then plays a slide-up fade-in entrance on each container.
+function transitionDetailCharts(updateFn) {
+    const trendCanvas    = document.getElementById('trendChart');
+    const volumeCanvas   = document.getElementById('volumeChart');
+    const trendWrapper   = trendCanvas  ? trendCanvas.closest('.chart-container')  : null;
+    const volumeWrapper  = volumeCanvas ? volumeCanvas.closest('.chart-container') : null;
+
+    // Step 1 — fade out
+    [trendWrapper, volumeWrapper].forEach(el => {
+        if (el) { el.classList.remove('chart-tf-enter'); el.classList.add('chart-tf-exit'); }
+    });
+
+    // Step 2 — after fade-out (≈180ms), rebuild and fade in
+    setTimeout(() => {
+        updateFn();
+
+        [trendWrapper, volumeWrapper].forEach(el => {
+            if (el) {
+                el.classList.remove('chart-tf-exit');
+                // Force reflow so animation restarts
+                void el.offsetWidth;
+                el.classList.add('chart-tf-enter');
+            }
+        });
+
+        // Clean up class after animation completes
+        setTimeout(() => {
+            [trendWrapper, volumeWrapper].forEach(el => {
+                if (el) el.classList.remove('chart-tf-enter');
+            });
+        }, 380);
+    }, 190);
+}
+
+// Same transition for the Relative Performance chart (Chart 1).
+function transitionRelativeChart(updateFn) {
+    const canvas  = document.getElementById('relativePerformanceChart');
+    const wrapper = canvas ? canvas.closest('.chart-container') : null;
+
+    if (wrapper) { wrapper.classList.remove('chart-tf-enter'); wrapper.classList.add('chart-tf-exit'); }
+
+    setTimeout(() => {
+        updateFn();
+        if (wrapper) {
+            wrapper.classList.remove('chart-tf-exit');
+            void wrapper.offsetWidth;
+            wrapper.classList.add('chart-tf-enter');
+        }
+        setTimeout(() => { if (wrapper) wrapper.classList.remove('chart-tf-enter'); }, 380);
+    }, 190);
 }
 
 // Sync X-axis zoom/pan between linked charts
@@ -384,19 +558,32 @@ function syncXAxis(sourceChart, targetChart) {
 }
 
 // Get default zoom size based on the timeframe
-function getDefaultZoom(N) {
-    if (currentTimeframe === 'daily') return Math.min(N, 22);
-    if (currentTimeframe === 'weekly') return Math.min(N, 12);
-    if (currentTimeframe === 'monthly') return Math.min(N, 36);
-    if (currentTimeframe === 'yearly') return Math.min(N, 10);
+function getDefaultZoom(N, timeframe) {
+    const tf = timeframe || currentTimeframe;
+    if (tf === 'daily') return Math.min(N, 22);
+    if (tf === 'weekly') return Math.min(N, 12);
+    if (tf === 'monthly') return Math.min(N, 36);
+    if (tf === 'yearly') return Math.min(N, 10);
     return N;
+}
+
+// Returns the appropriate Chart.js time unit for the current timeframe
+function getTimeUnit() {
+    if (currentTimeframe === 'daily')   return 'day';
+    if (currentTimeframe === 'weekly')  return 'week';
+    if (currentTimeframe === 'monthly') return 'month';
+    if (currentTimeframe === 'yearly')  return 'year';
+    return 'day';
 }
 
 // Extract the visible data range from resampled stock data
 function getVisibleStockData(chart, resampledData) {
     if (!chart || !chart.scales || !chart.scales.x) {
         const N = resampledData.length;
-        return resampledData.slice(Math.max(0, N - getDefaultZoom(N)));
+        let tf = currentTimeframe;
+        if (chart === relativeChart) tf = relativeTimeframe;
+        if (chart === ihsgTrendChart) tf = heatmapTimeframe;
+        return resampledData.slice(Math.max(0, N - getDefaultZoom(N, tf)));
     }
     
     const isTimeScale = chart.options.scales.x.type === 'timeseries' || chart.options.scales.x.type === 'time';
@@ -425,7 +612,7 @@ function updateInsightsFromChart() {
     const activeStockData = stockData.filter(item => item.active !== false);
     const resampled = resampleDataset(activeStockData, currentTimeframe);
     const visibleData = getVisibleStockData(trendChart, resampled);
-    generateInsights(ticker, visibleData);
+    generateInsights(ticker, visibleData, resampled);
 }
 
 // Handle double click reset interaction
@@ -433,13 +620,16 @@ function handleChartReset(chart) {
     if (!chart) return;
     
     const isTimeScale = chart.options.scales.x.type === 'timeseries' || chart.options.scales.x.type === 'time';
+    let tf = currentTimeframe;
+    if (chart === relativeChart) tf = relativeTimeframe;
+    if (chart === ihsgTrendChart) tf = heatmapTimeframe;
     
     if (isTimeScale) {
         const dataset = chart.data.datasets[0];
         if (dataset && dataset.data && dataset.data.length > 0) {
             const data = dataset.data;
             const N = data.length;
-            const defaultZoom = getDefaultZoom(N);
+            const defaultZoom = getDefaultZoom(N, tf);
             
             const minIndex = Math.max(0, N - defaultZoom);
             const maxIndex = N - 1;
@@ -449,7 +639,7 @@ function handleChartReset(chart) {
         }
     } else {
         const N = chart.data.labels ? chart.data.labels.length : 0;
-        const defaultZoom = getDefaultZoom(N);
+        const defaultZoom = getDefaultZoom(N, tf);
         chart.options.scales.x.min = Math.max(0, N - defaultZoom);
         chart.options.scales.x.max = N - 1;
     }
@@ -518,14 +708,16 @@ function renderRelativeChart() {
                     }
                 },
                 tooltip: {
-                    backgroundColor: '#141A21',
-                    borderColor: '#2A3441',
+                    backgroundColor: 'rgba(20, 26, 33, 0.95)',
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
                     borderWidth: 1,
                     titleColor: '#FFFFFF',
-                    bodyColor: '#9CA3AF',
-                    titleFont: { family: 'Inter', weight: 'bold' },
-                    bodyFont: { family: 'Inter' },
-                    padding: 12,
+                    bodyColor: '#E5E7EB',
+                    titleFont: { family: 'Inter', size: 12, weight: '600' },
+                    bodyFont: { family: 'Inter', size: 11 },
+                    padding: 14,
+                    titleSpacing: 8,
+                    bodySpacing: 6,
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
@@ -572,20 +764,41 @@ function renderRelativeChart() {
             },
             scales: {
                 x: {
+                    type: 'timeseries',
+                    time: { unit: 'year', tooltipFormat: 'dd MMM yyyy' },
+                    adapters: { date: { locale: 'id' } },
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawTicks: false },
-                    ticks: { color: '#9CA3AF', font: { family: 'Inter', size: 10 }, maxTicksLimit: 12 }
+                    ticks: {
+                        color: '#9CA3AF',
+                        font: { family: 'Inter', size: 11, weight: '500' },
+                        maxTicksLimit: 12,
+                        align: 'inner',
+                        padding: 10
+                    }
                 },
                 y: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawTicks: false },
                     ticks: {
                         color: '#9CA3AF',
-                        font: { family: 'Inter', size: 10 },
+                        font: { family: 'Inter', size: 11, weight: '500' },
+                        padding: 10,
                         callback: function(value) { return value.toFixed(0) + '%'; }
                     }
                 }
             }
         }
     });
+
+    setupXAxisDrag(relativeChart);
+}
+
+// Helper to map relative timeframe to Chart.js time scale unit
+function getRelativeTimeUnit(timeframe) {
+    if (timeframe === 'daily')   return 'day';
+    if (timeframe === 'weekly')  return 'week';
+    if (timeframe === 'monthly') return 'month';
+    if (timeframe === 'yearly')  return 'year';
+    return 'day';
 }
 
 // Update Chart 1 dynamically based on resampled and sliced datasets
@@ -596,6 +809,9 @@ function updateRelativeChart() {
     const resampledIHSG = resampleDataset(rawIHSG, relativeTimeframe);
     const labels = resampledIHSG.map(item => item.date);
     
+    // Set time unit dynamically based on timeframe
+    relativeChart.options.scales.x.time.unit = getRelativeTimeUnit(relativeTimeframe);
+    
     const datasets = Object.keys(pricesData).map(ticker => {
         const resampled = resampleDataset(pricesData[ticker], relativeTimeframe);
         
@@ -603,12 +819,31 @@ function updateRelativeChart() {
         const firstActiveItem = rawData.find(item => item.active !== false);
         const firstClose = firstActiveItem ? firstActiveItem.close : null;
         
-        const rebasedData = resampled.map(item => item.rebased);
-        const pricesList = resampled.map(item => item.active !== false ? item.close : null);
+        // Filter out inactive items to avoid plotting flat zero lines before IPO
+        const activeResampled = resampled.filter(item => item.active !== false);
+        
+        const dataPoints = activeResampled.map(item => ({
+            x: new Date(item.date).getTime(),
+            y: item.rebased
+        }));
+        
+        const pricesList = activeResampled.map(item => item.close);
+        
+        // Prepend the actual IPO date at 0.0% so the performance line starts exactly at 0.0% at its start day
+        if (firstActiveItem && dataPoints.length > 0) {
+            const firstActiveTime = new Date(firstActiveItem.date).getTime();
+            if (dataPoints[0].x !== firstActiveTime) {
+                dataPoints.unshift({
+                    x: firstActiveTime,
+                    y: 0.0
+                });
+                pricesList.unshift(firstActiveItem.close);
+            }
+        }
         
         return {
             label: ticker === 'IHSG' ? 'IHSG (Benchmark)' : ticker,
-            data: rebasedData,
+            data: dataPoints,
             prices: pricesList,
             firstClose: firstClose,
             borderColor: ASSET_COLORS[ticker] || '#FFF',
@@ -624,246 +859,398 @@ function updateRelativeChart() {
     datasets.sort((a, b) => (a.label.includes('IHSG') ? 1 : -1));
     
     relativeChart.data.labels = labels;
-    relativeChart.data.datasets = datasets;
     
     const N = labels.length;
-    const defaultZoom = getDefaultZoom(N);
+    const defaultZoom = getDefaultZoom(N, relativeTimeframe);
     
     const minIndex = Math.max(0, N - defaultZoom);
     const maxIndex = N - 1;
     
-    relativeChart.options.scales.x.min = minIndex;
-    relativeChart.options.scales.x.max = maxIndex;
+    // Set time scale limits in milliseconds
+    const minTime = new Date(labels[minIndex]).getTime();
+    const maxTime = new Date(labels[maxIndex]).getTime();
     
+    relativeChart.options.scales.x.min = minTime;
+    relativeChart.options.scales.x.max = maxTime;
+    
+    // Assign datasets to calculate target Y scale ranges
+    relativeChart.data.datasets = datasets;
     autoScaleY(relativeChart);
+    
+    // Set datasets to flat 0% baseline for the initial frame
+    const flatDatasets = datasets.map(ds => {
+        return {
+            ...ds,
+            data: ds.data.map(pt => pt === null ? null : { x: pt.x, y: 0.0 })
+        };
+    });
+    relativeChart.data.datasets = flatDatasets;
+    
+    // Turn off animation temporarily to draw the flat state instantly
+    relativeChart.options.animation = false;
     relativeChart.update('none');
+    
+    // Animate lines rising up to target values smoothly
+    setTimeout(() => {
+        if (!relativeChart) return;
+        
+        relativeChart.options.animation = {
+            duration: 1200,
+            easing: 'easeOutCubic'
+        };
+        
+        relativeChart.data.datasets = datasets;
+        relativeChart.update();
+        
+        // Reset animation duration back to 0 after completion to keep drag scaling crisp
+        setTimeout(() => {
+            if (relativeChart && relativeChart.options) {
+                relativeChart.options.animation = false;
+            }
+        }, 1250);
+    }, 50);
+}
+
+function animateDetailChartsTimeframe(targetMin, targetMax, targetTrendChart, targetVolumeChart) {
+    isDetailChartAnimating = true;
+    
+    // Clear crosshair state immediately to prevent visual glitches or redraw loops during animation
+    crosshairState.xVal = null;
+    crosshairState.yValTrend = null;
+    crosshairState.yValVolume = null;
+    crosshairState.activeChartId = null;
+    
+    const duration = 600; // Snapper 600ms rollout
+    const startTime = performance.now();
+    
+    const windowSize = targetMax - targetMin;
+    const startMin = targetMax;
+    const startMax = targetMax + windowSize;
+    
+    // Temporarily disable tooltips, hover effects, and events to optimize performance during animation
+    let originalTrendEvents = undefined;
+    let originalVolumeEvents = undefined;
+    
+    // Calculate final Y limits by temporarily setting X scales to the target range
+    let targetTrendYMin = null;
+    let targetTrendYMax = null;
+    if (targetTrendChart) {
+        // Clear active hover state & tooltip
+        try {
+            if (targetTrendChart.tooltip) targetTrendChart.tooltip.setActiveElements([], {x: 0, y: 0});
+            targetTrendChart.setActiveElements([]);
+        } catch (e) {}
+        
+        originalTrendEvents = targetTrendChart.options.events;
+        targetTrendChart.options.events = []; // Disable hover/tooltip processing
+        
+        targetTrendChart.options.scales.x.min = targetMin;
+        targetTrendChart.options.scales.x.max = targetMax;
+        autoScaleY(targetTrendChart);
+        targetTrendYMin = targetTrendChart.options.scales.y.min;
+        targetTrendYMax = targetTrendChart.options.scales.y.max;
+        
+        // Lock Y scale during animation
+        targetTrendChart.options.scales.y.min = targetTrendYMin;
+        targetTrendChart.options.scales.y.max = targetTrendYMax;
+        
+        // Disable zoom/pan during animation to prevent user scroll conflicts
+        try {
+            if (targetTrendChart.options.plugins.zoom && targetTrendChart.options.plugins.zoom.zoom && targetTrendChart.options.plugins.zoom.zoom.wheel) {
+                targetTrendChart.options.plugins.zoom.zoom.wheel.enabled = false;
+                targetTrendChart.options.plugins.zoom.pan.enabled = false;
+            }
+        } catch (e) {
+            console.warn("Could not temporarily disable zoom for trend chart:", e);
+        }
+        
+        // Set to start window initially
+        targetTrendChart.options.scales.x.min = startMin;
+        targetTrendChart.options.scales.x.max = startMax;
+        targetTrendChart.update('none');
+    }
+    
+    let targetVolumeYMin = null;
+    let targetVolumeYMax = null;
+    if (targetVolumeChart) {
+        // Clear active hover state & tooltip
+        try {
+            if (targetVolumeChart.tooltip) targetVolumeChart.tooltip.setActiveElements([], {x: 0, y: 0});
+            targetVolumeChart.setActiveElements([]);
+        } catch (e) {}
+        
+        originalVolumeEvents = targetVolumeChart.options.events;
+        targetVolumeChart.options.events = []; // Disable hover/tooltip processing
+        
+        targetVolumeChart.options.scales.x.min = targetMin;
+        targetVolumeChart.options.scales.x.max = targetMax;
+        autoScaleY(targetVolumeChart);
+        targetVolumeYMin = targetVolumeChart.options.scales.y.min;
+        targetVolumeYMax = targetVolumeChart.options.scales.y.max;
+        
+        // Lock Y scale during animation
+        targetVolumeChart.options.scales.y.min = targetVolumeYMin;
+        targetVolumeChart.options.scales.y.max = targetVolumeYMax;
+        
+        try {
+            if (targetVolumeChart.options.plugins.zoom && targetVolumeChart.options.plugins.zoom.zoom && targetVolumeChart.options.plugins.zoom.zoom.wheel) {
+                targetVolumeChart.options.plugins.zoom.zoom.wheel.enabled = false;
+                targetVolumeChart.options.plugins.zoom.pan.enabled = false;
+            }
+        } catch (e) {
+            console.warn("Could not temporarily disable zoom for volume chart:", e);
+        }
+        
+        // Set to start window initially
+        targetVolumeChart.options.scales.x.min = startMin;
+        targetVolumeChart.options.scales.x.max = startMax;
+        targetVolumeChart.update('none');
+    }
+
+    function step(now) {
+        if (targetTrendChart !== trendChart || targetVolumeChart !== volumeChart) {
+            return;
+        }
+
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        // Use easeOutQuart (1 - (1-t)^4) for snappier and smoother initial response
+        const easedProgress = 1 - Math.pow(1 - progress, 4);
+        
+        const currentMin = startMin - easedProgress * (startMin - targetMin);
+        const currentMax = startMax - easedProgress * (startMax - targetMax);
+        
+        if (trendChart) {
+            trendChart.options.scales.x.min = currentMin;
+            trendChart.options.scales.x.max = currentMax;
+            trendChart.update('none');
+        }
+        if (volumeChart) {
+            volumeChart.options.scales.x.min = currentMin;
+            volumeChart.options.scales.x.max = currentMax;
+            volumeChart.update('none');
+        }
+        
+        if (progress < 1) {
+            requestAnimationFrame(step);
+        } else {
+            isDetailChartAnimating = false;
+            
+            // Clear crosshair state one final time to prevent residual drawings
+            crosshairState.xVal = null;
+            crosshairState.yValTrend = null;
+            crosshairState.yValVolume = null;
+            crosshairState.activeChartId = null;
+
+            // Unlock Y scales and re-enable zoom/pan and default events
+            if (trendChart) {
+                trendChart.options.scales.y.min = undefined;
+                trendChart.options.scales.y.max = undefined;
+                trendChart.options.events = originalTrendEvents; // Restore events
+                autoScaleY(trendChart);
+                try {
+                    if (trendChart.options.plugins.zoom && trendChart.options.plugins.zoom.zoom && trendChart.options.plugins.zoom.zoom.wheel) {
+                        trendChart.options.plugins.zoom.zoom.wheel.enabled = true;
+                        trendChart.options.plugins.zoom.pan.enabled = true;
+                    }
+                } catch (e) {
+                    console.warn("Could not re-enable zoom for trend chart:", e);
+                }
+                trendChart.update('none');
+            }
+            if (volumeChart) {
+                volumeChart.options.scales.y.min = undefined;
+                volumeChart.options.scales.y.max = undefined;
+                volumeChart.options.events = originalVolumeEvents; // Restore events
+                autoScaleY(volumeChart);
+                try {
+                    if (volumeChart.options.plugins.zoom && volumeChart.options.plugins.zoom.zoom && volumeChart.options.plugins.zoom.zoom.wheel) {
+                        volumeChart.options.plugins.zoom.zoom.wheel.enabled = true;
+                        volumeChart.options.plugins.zoom.pan.enabled = true;
+                    }
+                } catch (e) {
+                    console.warn("Could not re-enable zoom for volume chart:", e);
+                }
+                volumeChart.update('none');
+            }
+            updateInsightsFromChart();
+        }
+    }
+    
+    requestAnimationFrame(step);
 }
 
 // Update Detail View (Chart 2, Chart 3, and Insights)
 function updateSelectedStockView(ticker) {
-    document.querySelectorAll('.selected-stock-ticker').forEach(el => {
+    document.querySelectorAll('.selected-stock-ticker').forEach(function(el) {
         el.textContent = ticker;
     });
-    document.querySelectorAll('.selected-stock-ticker-full').forEach(el => {
-        el.textContent = ` - ${TICKER_NAMES[ticker]}`;
+    document.querySelectorAll('.selected-stock-ticker-full').forEach(function(el) {
+        el.textContent = ' - ' + TICKER_NAMES[ticker];
     });
-    
-    const stockData = pricesData[ticker];
+
+    var stockData = pricesData[ticker];
     if (!stockData) return;
-    
-    // Filter out pre-IPO/inactive days so detailed charts start on the listing date
-    const activeStockData = stockData.filter(item => item.active !== false);
-    const resampled = resampleDataset(activeStockData, currentTimeframe);
-    
-    updateTrendChart(resampled, ticker);
-    updateMACDChart(resampled);
-    
-    const N = resampled.length;
-    const defaultZoom = getDefaultZoom(N);
-    
-    const minIndex = Math.max(0, N - defaultZoom);
-    const maxIndex = N - 1;
-    
-    if (trendChart && trendChart.data.datasets[0] && trendChart.data.datasets[0].data.length > 0) {
-        const data = trendChart.data.datasets[0].data;
-        trendChart.options.scales.x.min = data[minIndex].x;
-        trendChart.options.scales.x.max = data[maxIndex].x;
-        autoScaleY(trendChart);
-        trendChart.update('none');
+
+    // Filter inactive/pre-IPO rows
+    var activeStockData = stockData.filter(function(item) { return item.active !== false; });
+    var resampled = resampleDataset(activeStockData, currentTimeframe);
+
+    // Compute initial x window BEFORE building charts so they render correctly on first frame
+    var N = resampled.length;
+    var defaultZoom = getDefaultZoom(N, currentTimeframe);
+    var minIndex = Math.max(0, N - defaultZoom);
+    var maxIndex = N - 1;
+
+    var initialMin = null;
+    var initialMax = null;
+    var startMin = null;
+    var startMax = null;
+    if (N > 0) {
+        initialMin = new Date(resampled[minIndex].date).getTime();
+        initialMax = new Date(resampled[maxIndex].date).getTime();
+        var windowSize = initialMax - initialMin;
+        startMin = initialMax;
+        startMax = initialMax + windowSize;
     }
-    if (volumeChart && volumeChart.data.datasets[0] && volumeChart.data.datasets[0].data.length > 0) {
-        const data = volumeChart.data.datasets[0].data;
-        volumeChart.options.scales.x.min = data[minIndex].x;
-        volumeChart.options.scales.x.max = data[maxIndex].x;
-        autoScaleY(volumeChart);
-        volumeChart.update('none');
+
+    updateTrendChart(resampled, ticker, startMin, startMax);
+    updateMACDChart(resampled, startMin, startMax);
+
+    // autoScaleY after charts are built
+    if (trendChart)  { autoScaleY(trendChart);  trendChart.update('none'); }
+    if (volumeChart) { autoScaleY(volumeChart); volumeChart.update('none'); }
+
+    if (N >= 2) {
+        animateDetailChartsTimeframe(initialMin, initialMax, trendChart, volumeChart);
+    } else {
+        var visibleData = getVisibleStockData(trendChart, resampled);
+        generateInsights(ticker, visibleData, resampled);
     }
-    
-    const visibleData = getVisibleStockData(trendChart, resampled);
-    generateInsights(ticker, visibleData);
 }
 
 // Chart 2: Trend Chart (Candlestick + MA lines)
-function updateTrendChart(resampled, ticker) {
-    const ctx = document.getElementById('trendChart').getContext('2d');
-    
-    if (trendChart) {
-        trendChart.destroy();
-        trendChart = null;
+function updateTrendChart(resampled, ticker, initialMin, initialMax) {
+    var ctx = document.getElementById('trendChart').getContext('2d');
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+
+    var timeUnit = getTimeUnit();
+
+    // Force global chartjs-chart-financial colors to match our vibrant KPI colors
+    if (Chart.defaults && Chart.defaults.elements && Chart.defaults.elements.candlestick) {
+        Chart.defaults.elements.candlestick.color = { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' };
+        Chart.defaults.elements.candlestick.borderColor = { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' };
     }
+
+    var candleData = resampled.map(function(item) {
+        return { x: new Date(item.date).getTime(), o: item.open, h: item.high, l: item.low, c: item.close };
+    });
+
+    // Pre-build sorted timestamps cache for O(log n) snap during mousemove
+    _trendTimestamps = candleData.map(function(d) { return d.x; }).sort(function(a, b) { return a - b; });
     
-    const candleData = resampled.map(item => ({
-        x: new Date(item.date).getTime(),
-        o: item.open,
-        h: item.high,
-        l: item.low,
-        c: item.close,
-        volume: item.volume
-    }));
-    
-    const ma20Data = resampled.map(item => ({
-        x: new Date(item.date).getTime(),
-        y: item.ma20 != null ? item.ma20 : null
-    }));
-    const ma50Data = resampled.map(item => ({
-        x: new Date(item.date).getTime(),
-        y: item.ma50 != null ? item.ma50 : null
-    }));
-    
-    const datasets = [
-        {
-            type: 'candlestick',
-            label: ticker,
-            data: candleData,
-            color: {
-                up:        '#12C286',  // bullish (close >= open)
-                down:      '#FF5555',  // bearish (close < open)
-                unchanged: '#9CA3AF'   // flat
-            },
-            borderColor: {
-                up:        '#12C286',
-                down:      '#FF5555',
-                unchanged: '#9CA3AF'
-            }
-        },
-        {
-            type: 'line',
-            label: 'MA20',
-            data: ma20Data,
-            borderColor: '#F59E0B',   // yellow
-            borderWidth: 1.5,
-            pointRadius: 0,
-            fill: false,
-            borderDash: [4, 3],
-            tension: 0.1,
-            spanGaps: true
-        },
-        {
-            type: 'line',
-            label: 'MA50',
-            data: ma50Data,
-            borderColor: '#3B82F6',   // blue
-            borderWidth: 1.5,
-            pointRadius: 0,
-            fill: false,
-            borderDash: [6, 4],
-            tension: 0.1,
-            spanGaps: true
-        }
-    ];
-    
+    var ma20Data = resampled.map(function(item) {
+        return { x: new Date(item.date).getTime(), y: item.ma20 != null ? item.ma20 : null };
+    });
+    var ma50Data = resampled.map(function(item) {
+        return { x: new Date(item.date).getTime(), y: item.ma50 != null ? item.ma50 : null };
+    });
+
     trendChart = new Chart(ctx, {
         type: 'candlestick',
-        data: { datasets: datasets },
-        plugins: [trendChartRulerPlugin],
+        data: { datasets: [
+            { type: 'candlestick', label: ticker, data: candleData,
+              color: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' },
+              borderColor: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' } },
+            { type: 'line', label: 'MA20', data: ma20Data, borderColor: '#F59E0B', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [4, 3], tension: 0.1, spanGaps: true },
+            { type: 'line', label: 'MA50', data: ma50Data, borderColor: '#3B82F6', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [6, 4], tension: 0.1, spanGaps: true }
+        ]},
+        plugins: [trendChartRulerPlugin, crosshairPlugin],
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                mode: 'index',
-                intersect: false
+            elements: {
+                candlestick: {
+                    color: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' },
+                    borderColor: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' },
+                    borderWidth: 1.5
+                }
             },
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false, axis: 'x' },
             plugins: {
                 zoom: {
-                    pan: {
-                        enabled: true,
-                        mode: 'x',
-                        onPan: ({chart}) => {
-                            syncXAxis(chart, volumeChart);
-                            autoScaleY(chart);
-                            if (volumeChart) {
-                                autoScaleY(volumeChart);
-                                volumeChart.update('none');
-                            }
-                            chart.update('none');
-                            updateInsightsFromChart();
-                        }
-                    },
-                    zoom: {
-                        wheel: { enabled: true, speed: 0.1 },
-                        pinch: { enabled: true },
-                        mode: 'x',
-                        onZoom: ({chart}) => {
-                            syncXAxis(chart, volumeChart);
-                            autoScaleY(chart);
-                            if (volumeChart) {
-                                autoScaleY(volumeChart);
-                                volumeChart.update('none');
-                            }
-                            chart.update('none');
-                            updateInsightsFromChart();
-                        }
-                    }
+                    pan: { enabled: true, mode: 'x', onPan: function(ref) {
+                        var c = ref.chart; syncXAxis(c, volumeChart); autoScaleY(c);
+                        if (volumeChart) { autoScaleY(volumeChart); volumeChart.update('none'); }
+                        c.update('none'); updateInsightsFromChart();
+                    }},
+                    zoom: { wheel: { enabled: true, speed: 0.1 }, pinch: { enabled: true }, mode: 'x', onZoom: function(ref) {
+                        var c = ref.chart; syncXAxis(c, volumeChart); autoScaleY(c);
+                        if (volumeChart) { autoScaleY(volumeChart); volumeChart.update('none'); }
+                        c.update('none'); updateInsightsFromChart();
+                    }}
                 },
-                legend: {
-                    display: true,
-                    labels: {
-                        color: '#9CA3AF',
-                        font: { family: 'Inter', size: 10 },
-                        filter: function(item) {
-                            return item.text === 'MA20' || item.text === 'MA50';
-                        }
-                    }
-                },
+                legend: { display: true, labels: { color: '#9CA3AF', font: { family: 'Inter', size: 10 },
+                    filter: function(item) { return item.text === 'MA20' || item.text === 'MA50'; } } },
                 tooltip: {
-                    backgroundColor: '#141A21',
-                    borderColor: '#2A3441',
+                    backgroundColor: 'rgba(20, 26, 33, 0.95)',
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
                     borderWidth: 1,
-                    padding: 12,
-                    callbacks: {
-                        label: function(context) {
-                            const ds = context.dataset;
-                            if (ds.type === 'candlestick') {
-                                const d = context.raw;
-                                return [
-                                    `Open : Rp ${d.o.toLocaleString('id-ID')}`,
-                                    `High : Rp ${d.h.toLocaleString('id-ID')}`,
-                                    `Low  : Rp ${d.l.toLocaleString('id-ID')}`,
-                                    `Close: Rp ${d.c.toLocaleString('id-ID')}`
-                                ];
-                            }
-                            let label = ds.label || '';
-                            if (label) label += ': Rp ';
-                            if (context.parsed.y !== null) {
-                                label += context.parsed.y.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-                            }
-                            return label;
+                    padding: 14,
+                    titleColor: '#FFFFFF',
+                    bodyColor: '#E5E7EB',
+                    titleFont: { family: 'Inter', size: 12, weight: '600' },
+                    bodyFont: { family: 'Inter', size: 11 },
+                    titleSpacing: 8,
+                    bodySpacing: 6,
+                    callbacks: { label: function(context) {
+                        var ds = context.dataset;
+                        if (ds.type === 'candlestick') {
+                            var d = context.raw;
+                            return ['Open : Rp '+d.o.toLocaleString('id-ID'), 'High : Rp '+d.h.toLocaleString('id-ID'),
+                                    'Low  : Rp '+d.l.toLocaleString('id-ID'), 'Close: Rp '+d.c.toLocaleString('id-ID')];
                         }
-                    }
+                        var lbl = ds.label || ''; if (lbl) lbl += ': ';
+                        lbl += 'Rp ';
+                        if (context.parsed.y !== null) lbl += context.parsed.y.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+                        return lbl;
+                    }}
                 }
             },
             scales: {
                 x: {
                     type: 'timeseries',
-                    time: { unit: 'month', tooltipFormat: 'dd MMM yyyy' },
+                    offset: true,
+                    min: initialMin != null ? initialMin : undefined,
+                    max: initialMax != null ? initialMax : undefined,
+                    time: { unit: timeUnit, tooltipFormat: 'dd MMM yyyy' },
                     adapters: { date: { locale: 'id' } },
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawTicks: false },
-                    ticks: { color: '#9CA3AF', font: { family: 'Inter', size: 10 }, maxTicksLimit: 8 }
+                    grid: { color: 'rgba(255,255,255,0.05)', drawTicks: false, offset: false },
+                    ticks: { color: '#9CA3AF', font: { family: 'Inter', size: 11, weight: '500' }, maxTicksLimit: 8, align: 'center', padding: 10 }
                 },
                 y: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawTicks: false },
-                    ticks: {
-                        color: '#9CA3AF',
-                        font: { family: 'Inter', size: 10 },
-                        callback: function(value) { return 'Rp ' + value.toLocaleString('id-ID'); }
-                    },
-                    afterFit: function(scaleInstance) {
-                        scaleInstance.width = 90;
-                    }
+                    grid: { color: 'rgba(255,255,255,0.05)', drawTicks: false },
+                    ticks: { color: '#9CA3AF', font: { family: 'Inter', size: 11, weight: '500' }, padding: 10,
+                        callback: function(value) { return 'Rp ' + value.toLocaleString('id-ID'); } },
+                    afterFit: function(scaleInstance) { scaleInstance.width = 95; }
+                },
+                yRight: {
+                    type: 'linear',
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    ticks: { display: false },
+                    afterFit: function(scaleInstance) { scaleInstance.width = 75; }
                 }
             }
         }
     });
+
+    setupXAxisDrag(trendChart);
 }
 
 // Chart 3: MACD Chart
-function updateMACDChart(resampled) {
-    const ctx = document.getElementById('volumeChart').getContext('2d');
-    
-    if (volumeChart) {
-        volumeChart.destroy();
-        volumeChart = null;
-    }
+function updateMACDChart(resampled, initialMin, initialMax) {
+    var ctx = document.getElementById('volumeChart').getContext('2d');
+    if (volumeChart) { volumeChart.destroy(); volumeChart = null; }
     
     // Calculate MACD values
     const macdData = calculateMACD(resampled);
@@ -885,7 +1272,7 @@ function updateMACDChart(resampled) {
         y: macdData.signalLine[idx]
     }));
     
-    const barColors = macdData.histogram.map(val => val >= 0 ? '#26A69A' : '#EF5350');
+    const barColors = macdData.histogram.map(val => val >= 0 ? '#12C286' : '#FF5555');
     
     const datasets = [
         {
@@ -927,6 +1314,7 @@ function updateMACDChart(resampled) {
     
     volumeChart = new Chart(ctx, {
         data: { datasets: datasets },
+        plugins: [crosshairPlugin],
         options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -974,10 +1362,16 @@ function updateMACDChart(resampled) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: '#141A21',
-                    borderColor: '#2A3441',
+                    backgroundColor: 'rgba(20, 26, 33, 0.95)',
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
                     borderWidth: 1,
-                    padding: 12,
+                    padding: 14,
+                    titleColor: '#FFFFFF',
+                    bodyColor: '#E5E7EB',
+                    titleFont: { family: 'Inter', size: 12, weight: '600' },
+                    bodyFont: { family: 'Inter', size: 11 },
+                    titleSpacing: 8,
+                    bodySpacing: 6,
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
@@ -995,16 +1389,25 @@ function updateMACDChart(resampled) {
             scales: {
                 x: {
                     type: 'timeseries',
-                    time: { unit: 'month', tooltipFormat: 'dd MMM yyyy' },
+                    min: initialMin != null ? initialMin : undefined,
+                    max: initialMax != null ? initialMax : undefined,
+                    time: { unit: getTimeUnit(), tooltipFormat: 'dd MMM yyyy' },
                     adapters: { date: { locale: 'id' } },
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawTicks: false },
-                    ticks: { color: '#9CA3AF', font: { family: 'Inter', size: 10 }, maxTicksLimit: 8 }
+                    ticks: {
+                        color: '#9CA3AF',
+                        font: { family: 'Inter', size: 11, weight: '500' },
+                        maxTicksLimit: 8,
+                        align: 'inner',
+                        padding: 10
+                    }
                 },
                 y: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawTicks: false },
                     ticks: {
                         color: '#9CA3AF',
-                        font: { family: 'Inter', size: 10 },
+                        font: { family: 'Inter', size: 11, weight: '500' },
+                        padding: 10,
                         callback: function(value) {
                             if (value > 0) return '+' + value.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
                             if (value < 0) return value.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -1012,16 +1415,27 @@ function updateMACDChart(resampled) {
                         }
                     },
                     afterFit: function(scaleInstance) {
-                        scaleInstance.width = 90;
+                        scaleInstance.width = 95;
+                    }
+                },
+                yRight: {
+                    type: 'linear',
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    ticks: { display: false },
+                    afterFit: function(scaleInstance) {
+                        scaleInstance.width = 75;
                     }
                 }
             }
         }
     });
+
+    setupXAxisDrag(volumeChart);
 }
 
 // Generate Insights Automatically
-function generateInsights(ticker, stockData) {
+function generateInsights(ticker, stockData, fullResampled) {
     if (stockData.length === 0) return;
     
     const latest = stockData[stockData.length - 1];
@@ -1031,7 +1445,6 @@ function generateInsights(ticker, stockData) {
     const close = latest.close;
     const ma20 = latest.ma20;
     const ma50 = latest.ma50;
-    const latestVolume = latest.volume;
     
     // Calculate returns
     const stockReturn = ((close - first.close) / first.close * 100).toFixed(1);
@@ -1044,6 +1457,17 @@ function generateInsights(ticker, stockData) {
     const matchingLatestIHSG = resampledIHSG.find(item => item.date === latest.date) || resampledIHSG[resampledIHSG.length - 1];
     const ihsgReturn = ((matchingLatestIHSG.close - matchingFirstIHSG.close) / matchingFirstIHSG.close * 100).toFixed(1);
     
+    // Update Timeframe Note beside the badges
+    const noteEl = document.getElementById('insights-timeframe-note');
+    if (noteEl) {
+        let tfText = "";
+        if (currentTimeframe === 'daily') tfText = "DAILY";
+        else if (currentTimeframe === 'weekly') tfText = "WEEKLY";
+        else if (currentTimeframe === 'monthly') tfText = "MONTHLY";
+        else if (currentTimeframe === 'yearly') tfText = "YEARLY";
+        noteEl.textContent = tfText;
+    }
+
     // 1. Determine Trend Badge & Text
     let trendBadge = "Neutral";
     let trendBadgeClass = "badge-neutral";
@@ -1075,15 +1499,18 @@ function generateInsights(ticker, stockData) {
     }
     
     // 2. Determine MACD Momentum Badge & Text
-    const macdData = calculateMACD(stockData);
-    const len = stockData.length;
-    const latestMacd = macdData.macdLine[len - 1];
-    const latestSignal = macdData.signalLine[len - 1];
-    const latestHist = macdData.histogram[len - 1];
+    // Calculate MACD on the full resampled dataset to ensure lookback stability, then read the values at the latest visible date index
+    const macdData = calculateMACD(fullResampled || stockData);
+    const latestDate = latest.date;
+    const fullDataset = fullResampled || stockData;
+    const latestIdx = fullDataset.findIndex(item => item.date === latestDate);
     
-    const prevMacd = macdData.macdLine[len - 2] || latestMacd;
-    const prevSignal = macdData.signalLine[len - 2] || latestSignal;
-    const prevHist = macdData.histogram[len - 2] || latestHist;
+    const latestMacd = latestIdx !== -1 ? macdData.macdLine[latestIdx] : macdData.macdLine[macdData.macdLine.length - 1];
+    const latestSignal = latestIdx !== -1 ? macdData.signalLine[latestIdx] : macdData.signalLine[macdData.signalLine.length - 1];
+    const latestHist = latestIdx !== -1 ? macdData.histogram[latestIdx] : macdData.histogram[macdData.histogram.length - 1];
+    
+    const prevIdx = latestIdx > 0 ? latestIdx - 1 : latestIdx;
+    const prevHist = latestIdx !== -1 ? macdData.histogram[prevIdx] : (macdData.histogram[macdData.histogram.length - 2] || latestHist);
     
     let momentumBadge = "Momentum Neutral";
     let momentumBadgeClass = "badge-neutral";
@@ -1189,6 +1616,28 @@ function initCustomCursor() {
             cursor.classList.add('ruler-mode');
         } else {
             cursor.classList.remove('ruler-mode');
+        }
+
+        // Detect if hovering over any active chart's bottom X-axis region
+        let isScalingXArea = false;
+        const activeChartsList = [relativeChart, trendChart, volumeChart, ihsgTrendChart];
+        for (let i = 0; i < activeChartsList.length; i++) {
+            const c = activeChartsList[i];
+            if (c && c.canvas && c.canvas === e.target && c.chartArea) {
+                const rect = c.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                if (y > c.chartArea.bottom && x >= c.chartArea.left && x <= c.chartArea.right) {
+                    isScalingXArea = true;
+                    break;
+                }
+            }
+        }
+
+        if (isScalingXArea) {
+            cursor.classList.add('scaling-x-mode');
+        } else {
+            cursor.classList.remove('scaling-x-mode');
         }
     });
 
@@ -1623,3 +2072,604 @@ function calculateMACD(resampled) {
     };
 }
 
+// Format date for crosshair label box based on current timeframe
+function formatDateForCrosshair(timestamp, timeframe) {
+    const d = new Date(timestamp);
+    if (isNaN(d.getTime())) return "";
+    
+    if (timeframe === 'monthly') {
+        return d.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' });
+    } else if (timeframe === 'yearly') {
+        return d.toLocaleDateString('id-ID', { year: 'numeric' });
+    } else {
+        return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+}
+
+// Synced crosshair lines & axis labels plugin
+const crosshairPlugin = {
+    id: 'crosshairPlugin',
+    afterDatasetsDraw(chart, args, options) {
+        if (crosshairState.xVal === null) return;
+        
+        const ctx = chart.ctx;
+        const xScale = chart.scales.x;
+        const yScale = chart.scales.y;
+        
+        const xPixel = xScale.getPixelForValue(crosshairState.xVal);
+        
+        ctx.save();
+        
+        // 1. Draw synchronized vertical dotted line if inside chartArea
+        if (xPixel >= chart.chartArea.left && xPixel <= chart.chartArea.right) {
+            ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(xPixel, chart.chartArea.top);
+            ctx.lineTo(xPixel, chart.chartArea.bottom);
+            ctx.stroke();
+            
+            // Only draw X-axis label box if this is the active chart
+            if (crosshairState.activeChartId === chart.canvas.id) {
+                const text = formatDateForCrosshair(crosshairState.xVal, currentTimeframe);
+                ctx.font = '10px Inter';
+                const textWidth = ctx.measureText(text).width;
+                const boxWidth = textWidth + 12;
+                const boxHeight = 18;
+                const boxX = xPixel - boxWidth / 2;
+                const boxY = chart.chartArea.bottom + 2;
+                
+                // Keep box inside chart boundaries
+                let finalBoxX = boxX;
+                if (finalBoxX < chart.chartArea.left) {
+                    finalBoxX = chart.chartArea.left;
+                } else if (finalBoxX + boxWidth > chart.chartArea.right) {
+                    finalBoxX = chart.chartArea.right - boxWidth;
+                }
+                
+                ctx.fillStyle = '#2A3441';
+                ctx.beginPath();
+                if (ctx.roundRect) {
+                    ctx.roundRect(finalBoxX, boxY, boxWidth, boxHeight, 3);
+                } else {
+                    ctx.rect(finalBoxX, boxY, boxWidth, boxHeight);
+                }
+                ctx.fill();
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(text, finalBoxX + boxWidth / 2, boxY + boxHeight / 2);
+            }
+        }
+        
+        // 2. Draw horizontal dotted line and Y-axis label box if this is the active chart
+        if (crosshairState.activeChartId === chart.canvas.id) {
+            const yVal = chart.canvas.id === 'trendChart' ? crosshairState.yValTrend : crosshairState.yValVolume;
+            if (yVal !== null && yVal !== undefined) {
+                const yPixel = yScale.getPixelForValue(yVal);
+                
+                if (yPixel >= chart.chartArea.top && yPixel <= chart.chartArea.bottom) {
+                    ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(chart.chartArea.left, yPixel);
+                    ctx.lineTo(chart.chartArea.right, yPixel);
+                    ctx.stroke();
+                    
+                    // Format Y value text
+                    let formattedY = "";
+                    if (chart.canvas.id === 'trendChart') {
+                        formattedY = 'Rp ' + yVal.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+                    } else if (chart.canvas.id === 'volumeChart') {
+                        const sign = yVal >= 0 ? '+' : '';
+                        formattedY = sign + yVal.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    }
+                    
+                    ctx.font = '10px Inter';
+                    const textWidth = ctx.measureText(formattedY).width;
+                    const boxWidth = textWidth + 12;
+                    const boxHeight = 18;
+                    const boxX = chart.chartArea.left - boxWidth;
+                    const boxY = yPixel - boxHeight / 2;
+                    
+                    // Constrain box vertically within chartArea
+                    let finalBoxY = boxY;
+                    if (finalBoxY < chart.chartArea.top) {
+                        finalBoxY = chart.chartArea.top;
+                    } else if (finalBoxY + boxHeight > chart.chartArea.bottom) {
+                        finalBoxY = chart.chartArea.bottom - boxHeight;
+                    }
+                    
+                    ctx.fillStyle = '#2A3441';
+                    ctx.beginPath();
+                    if (ctx.roundRect) {
+                        ctx.roundRect(boxX, finalBoxY, boxWidth, boxHeight, 3);
+                    } else {
+                        ctx.rect(boxX, finalBoxY, boxWidth, boxHeight);
+                    }
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(formattedY, boxX + boxWidth / 2, finalBoxY + boxHeight / 2);
+                }
+            }
+        }
+        
+        ctx.restore();
+    }
+};
+
+// Setup mousemove and mouseleave events to synchronize crosshairs
+function setupCrosshairEvents() {
+    const trendCanvas = document.getElementById('trendChart');
+    const volumeCanvas = document.getElementById('volumeChart');
+    
+    if (!trendCanvas || !volumeCanvas) return;
+    
+    // Binary search: find index of nearest timestamp in sorted array
+    function bsSnapTimestamp(ts) {
+        var arr = _trendTimestamps;
+        if (!arr || arr.length === 0) return ts;
+        var lo = 0, hi = arr.length - 1;
+        while (lo < hi) {
+            var mid = (lo + hi) >> 1;
+            if (arr[mid] < ts) lo = mid + 1; else hi = mid;
+        }
+        // lo is first index >= ts; check lo-1 as well
+        if (lo > 0 && Math.abs(arr[lo - 1] - ts) <= Math.abs(arr[lo] - ts)) lo--;
+        return arr[lo];
+    }
+
+    const handleMouseMove = (e, chartId, chart, otherChart) => {
+        // Skip crosshair updates during detail chart transition animation to avoid lag/conflicts
+        if (isDetailChartAnimating) {
+            return;
+        }
+        // Skip crosshair drawing during active ruler measurement
+        if (rulerState && rulerState.active && rulerState.isMeasuring) {
+            handleMouseLeave();
+            return;
+        }
+
+        const rect = e.target.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        // Ensure mouse is inside chart Area
+        if (x < chart.chartArea.left || x > chart.chartArea.right ||
+            y < chart.chartArea.top  || y > chart.chartArea.bottom) {
+            handleMouseLeave();
+            return;
+        }
+
+        // Get raw values then snap X to nearest candle (binary search, O(log n))
+        const rawXVal = chart.scales.x.getValueForPixel(x);
+        const yVal    = chart.scales.y.getValueForPixel(y);
+        const snappedXVal = bsSnapTimestamp(rawXVal);
+
+        // Only schedule a redraw if something actually changed
+        const changed = (crosshairState.xVal !== snappedXVal ||
+                         crosshairState.activeChartId !== chartId);
+
+        crosshairState.xVal          = snappedXVal;
+        crosshairState.activeChartId = chartId;
+        if (chartId === 'trendChart') {
+            crosshairState.yValTrend  = yVal;
+            crosshairState.yValVolume = null;
+        } else {
+            crosshairState.yValVolume = yVal;
+            crosshairState.yValTrend  = null;
+        }
+
+        if (!changed) return;   // cursor still on same bar — skip repaint
+
+        // Throttle redraws to one per animation frame (≈16ms @ 60fps)
+        if (_crosshairRafId) cancelAnimationFrame(_crosshairRafId);
+        _crosshairRafId = requestAnimationFrame(function() {
+            _crosshairRafId = null;
+            chart.update('none');
+            if (otherChart) otherChart.update('none');
+        });
+    };
+    
+    const handleMouseLeave = () => {
+        if (crosshairState.xVal === null) return;
+        
+        crosshairState.xVal = null;
+        crosshairState.yValTrend = null;
+        crosshairState.yValVolume = null;
+        crosshairState.activeChartId = null;
+        
+        if (trendChart) trendChart.update('none');
+        if (volumeChart) volumeChart.update('none');
+    };
+    
+    trendCanvas.addEventListener('mousemove', (e) => {
+        if (trendChart && volumeChart) {
+            handleMouseMove(e, 'trendChart', trendChart, volumeChart);
+        }
+    });
+    
+    volumeCanvas.addEventListener('mousemove', (e) => {
+        if (volumeChart && trendChart) {
+            handleMouseMove(e, 'volumeChart', volumeChart, trendChart);
+        }
+    });
+    
+    trendCanvas.addEventListener('mouseleave', handleMouseLeave);
+    volumeCanvas.addEventListener('mouseleave', handleMouseLeave);
+}
+
+// Get heatmap block background color based on percentage change (TradingView style)
+function getHeatmapColor(val) {
+    if (val === null || val === undefined || Math.abs(val) < 0.01) {
+        return 'rgba(42, 52, 65, 0.4)'; // neutral translucent grey
+    }
+    const maxVal = 5.0; // color scales up to 5% change
+    const pct = Math.min(Math.abs(val) / maxVal, 1.0);
+    const opacity = 0.15 + pct * 0.70; // opacity between 0.15 and 0.85
+    
+    if (val > 0) {
+        return `rgba(38, 166, 154, ${opacity})`; // #26A69A green
+    } else {
+        return `rgba(239, 83, 80, ${opacity})`; // #EF5350 red
+    }
+}
+
+// Controller function to update overview section (Locks timeframe for both)
+function updateOverviewSection() {
+    updateIHSGTrendChart();
+    updateStockHeatmap();
+}
+
+// Simple IHSG line chart vs MA50
+function updateIHSGTrendChart() {
+    const rawIHSG = pricesData["IHSG"];
+    if (!rawIHSG) return;
+    
+    const resampled = resampleDataset(rawIHSG, heatmapTimeframe);
+    
+    const N = resampled.length;
+    const defaultZoom = getDefaultZoom(N, heatmapTimeframe);
+    const minIndex = Math.max(0, N - defaultZoom);
+    const sliced = resampled.slice(minIndex);
+    
+    const dates = sliced.map(item => new Date(item.date).getTime());
+    const closeData = sliced.map(item => item.close);
+    const ma50Data = sliced.map(item => item.ma50 != null ? item.ma50 : null);
+    
+    const ctx = document.getElementById('ihsgTrendChart').getContext('2d');
+    
+    if (ihsgTrendChart) {
+        ihsgTrendChart.destroy();
+        ihsgTrendChart = null;
+    }
+    
+    ihsgTrendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: [
+                {
+                    label: 'IHSG',
+                    data: closeData,
+                    borderColor: '#FFFFFF',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'MA50',
+                    data: ma50Data,
+                    borderColor: '#3B82F6',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    borderDash: [6, 4],
+                    tension: 0.1,
+                    spanGaps: true
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: '#9CA3AF',
+                        font: { family: 'Inter', size: 10 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(20, 26, 33, 0.95)',
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    borderWidth: 1,
+                    padding: 12,
+                    titleColor: '#FFFFFF',
+                    bodyColor: '#E5E7EB',
+                    titleFont: { family: 'Inter', size: 11, weight: '600' },
+                    bodyFont: { family: 'Inter', size: 10 },
+                    titleSpacing: 6,
+                    bodySpacing: 5,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) label += ': ';
+                            if (context.parsed.y !== null) {
+                                label += context.parsed.y.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'timeseries',
+                    time: { unit: getTimeUnit(), tooltipFormat: 'dd MMM yyyy' },
+                    adapters: { date: { locale: 'id' } },
+                    grid: { color: 'rgba(255, 255, 255, 0.02)', drawTicks: false },
+                    ticks: {
+                        color: '#9CA3AF',
+                        font: { family: 'Inter', size: 10, weight: '500' },
+                        maxTicksLimit: 4,
+                        align: 'inner',
+                        padding: 6
+                    }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.02)', drawTicks: false },
+                    ticks: {
+                        color: '#9CA3AF',
+                        font: { family: 'Inter', size: 10, weight: '500' },
+                        padding: 6,
+                        callback: function(value) { return value.toLocaleString('id-ID'); }
+                    }
+                }
+            }
+        }
+    });
+
+    setupXAxisDrag(ihsgTrendChart);
+}
+
+// Render stock heatmap grid — columns sorted ascending by |returnPct| (smallest left -> largest right)
+function updateStockHeatmap() {
+    const container = document.getElementById('stock-heatmap');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const tickers = ["BBCA", "BBRI", "BMRI", "TLKM", "BREN", "AMMN"];
+
+    // Step 1: Collect return percentages
+    const returns = {};
+    tickers.forEach(function(ticker) {
+        const rawData = pricesData[ticker];
+        if (!rawData) { returns[ticker] = 0; return; }
+        const activeData = rawData.filter(function(item) { return item.active !== false; });
+        const resampled  = resampleDataset(activeData, heatmapTimeframe);
+        let returnPct = 0;
+        if (resampled.length > 0) {
+            const latestItem = resampled[resampled.length - 1];
+            const prevItem   = resampled[resampled.length - 2] || latestItem;
+            if (prevItem.close !== 0) {
+                returnPct = ((latestItem.close - prevItem.close) / prevItem.close) * 100;
+            }
+        }
+        returns[ticker] = returnPct;
+    });
+
+    // Step 2: Define the 4 column groups
+    // 'solo' = one stock spanning both rows; 'pair' = two stocks stacked
+    const MIN_WEIGHT = 0.12;
+    const groups = [
+        { id: 'BBCA',      type: 'solo', stocks: ['BBCA'],        weight: Math.max(MIN_WEIGHT, Math.abs(returns['BBCA'])) },
+        { id: 'BBRI_BMRI', type: 'pair', stocks: ['BBRI', 'BMRI'], weight: Math.max(MIN_WEIGHT, Math.max(Math.abs(returns['BBRI']), Math.abs(returns['BMRI']))) },
+        { id: 'TLKM',      type: 'solo', stocks: ['TLKM'],        weight: Math.max(MIN_WEIGHT, Math.abs(returns['TLKM'])) },
+        { id: 'BREN_AMMN', type: 'pair', stocks: ['BREN', 'AMMN'], weight: Math.max(MIN_WEIGHT, Math.max(Math.abs(returns['BREN']), Math.abs(returns['AMMN']))) }
+    ];
+
+    // Step 3: Sort ascending by weight (smallest left, largest right)
+    groups.sort(function(a, b) { return a.weight - b.weight; });
+
+    // Step 4: Build grid-template-columns proportional to each column weight
+    const totalWeight = groups.reduce(function(sum, g) { return sum + g.weight; }, 0);
+    const colFr = groups.map(function(g) { return ((g.weight / totalWeight) * 100).toFixed(2) + 'fr'; }).join(' ');
+    container.style.gridTemplateColumns = colFr;
+
+    // Step 5: Build grid-template-rows — clamp pair row split to [25%, 75%]
+    // Prevents a small-move stock (AMMN +0.3%) from becoming an invisible sliver
+    // next to a large-move partner (BREN +27%).
+    const MIN_ROW_PCT = 25;
+    const MAX_ROW_PCT = 75;
+    let topFrSum = 0, botFrSum = 0, pairCount = 0;
+    groups.forEach(function(g) {
+        if (g.type === 'pair') {
+            const wTop = Math.max(MIN_WEIGHT, Math.abs(returns[g.stocks[0]]));
+            const wBot = Math.max(MIN_WEIGHT, Math.abs(returns[g.stocks[1]]));
+            const rawTop     = (wTop / (wTop + wBot)) * 100;
+            const clampedTop = Math.min(MAX_ROW_PCT, Math.max(MIN_ROW_PCT, rawTop));
+            topFrSum += clampedTop;
+            botFrSum += (100 - clampedTop);
+            pairCount++;
+        }
+    });
+    const avgTopFr = pairCount > 0 ? topFrSum / pairCount : 50;
+    const avgBotFr = pairCount > 0 ? botFrSum / pairCount : 50;
+    container.style.gridTemplateRows = avgTopFr.toFixed(2) + 'fr ' + avgBotFr.toFixed(2) + 'fr';
+
+    // Step 6: Assign grid areas from sorted column positions
+    const gridAreas = {};
+    groups.forEach(function(g, colIdx) {
+        const col = colIdx + 1;
+        if (g.type === 'solo') {
+            gridAreas[g.stocks[0]] = '1 / ' + col + ' / 3 / ' + (col + 1);
+        } else {
+            gridAreas[g.stocks[0]] = '1 / ' + col + ' / 2 / ' + (col + 1);
+            gridAreas[g.stocks[1]] = '2 / ' + col + ' / 3 / ' + (col + 1);
+        }
+    });
+
+    // Step 7: Render blocks
+    tickers.forEach(function(ticker, index) {
+        const returnPct = returns[ticker];
+        const color     = getHeatmapColor(returnPct);
+        const sign      = returnPct >= 0 ? '+' : '';
+        const pctText   = sign + returnPct.toFixed(2) + '%';
+        const absVal    = Math.abs(returnPct);
+        const fontScale = Math.min(1.4, 0.9 + (absVal / 5) * 0.5);
+        const pctScale  = Math.min(1.25, 0.8 + (absVal / 5) * 0.45);
+
+        const block = document.createElement('div');
+        block.className = 'heatmap-block heatmap-block-anim';
+        block.style.gridArea = gridAreas[ticker];
+        block.style.backgroundColor = color;
+        
+        // Stagger the CSS pop-in animation delay
+        block.style.animationDelay = (index * 60) + 'ms';
+
+        const tickerDiv = document.createElement('div');
+        tickerDiv.className = 'heatmap-ticker';
+        tickerDiv.style.fontSize = fontScale.toFixed(2) + 'rem';
+        tickerDiv.textContent = ticker;
+
+        const pctDiv = document.createElement('div');
+        pctDiv.className = 'heatmap-pct';
+        pctDiv.style.fontSize = pctScale.toFixed(2) + 'rem';
+        pctDiv.textContent = '0,00%'; // Initial text before count-up starts
+
+        block.appendChild(tickerDiv);
+        block.appendChild(pctDiv);
+        block.title = ticker + ': ' + pctText;
+
+        block.addEventListener('click', function() {
+            const stockSelect = document.getElementById('stock-select');
+            if (stockSelect) {
+                stockSelect.value = ticker;
+                updateSelectedStockView(ticker);
+                const analyticsSection = document.querySelector('.analytics-section');
+                if (analyticsSection) {
+                    analyticsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            }
+        });
+
+        container.appendChild(block);
+        
+        // Start count-up animation stagger aligned with CSS pop-in delay
+        setTimeout(function() {
+            animateValue(pctDiv, 0, returnPct, 1500, 2, '', '%');
+        }, index * 60);
+    });
+}
+
+// Global timeline scaling drag handlers for premium user interaction (TradingView Style)
+window.addEventListener('mousemove', (e) => {
+    if (!activeScalingChart) return;
+    
+    const chart = activeScalingChart;
+    const dx = e.clientX - chart._scaleStartX;
+    const width = chart.width || 300;
+    
+    // Drag left = zoom out (show more history), drag right = zoom in (show less history)
+    const factor = Math.exp(-dx / width * 1.5);
+    let newRange = chart._scaleStartRange * factor;
+
+    const datasets = chart.data.datasets;
+    if (datasets && datasets[0] && datasets[0].data && datasets[0].data.length > 0) {
+        const data = datasets[0].data;
+        const totalN = data.length;
+        const isTimeScale = chart.options.scales.x.type === 'timeseries' || chart.options.scales.x.type === 'time';
+        
+        if (isTimeScale) {
+            const latestTime = (data[data.length - 1] && data[data.length - 1].x) || (chart.data.labels && chart.data.labels[chart.data.labels.length - 1]);
+            const firstTime = (data[0] && data[0].x) || (chart.data.labels && chart.data.labels[0]);
+            if (latestTime && firstTime) {
+                const totalDuration = latestTime - firstTime;
+                const avgPointDuration = totalDuration / totalN;
+                
+                const minRange = avgPointDuration * 5; // minimum 5 bars
+                const maxRange = totalDuration;
+                newRange = Math.max(minRange, Math.min(maxRange, newRange));
+                
+                chart.options.scales.x.max = latestTime;
+                chart.options.scales.x.min = latestTime - newRange;
+            }
+        } else {
+            const minRange = 5;
+            const maxRange = totalN - 1;
+            newRange = Math.max(minRange, Math.min(maxRange, newRange));
+            
+            const latestIdx = totalN - 1;
+            chart.options.scales.x.max = latestIdx;
+            chart.options.scales.x.min = Math.max(0, latestIdx - Math.round(newRange));
+        }
+        
+        autoScaleY(chart);
+        chart.update('none');
+
+        // Synchronize scale shifts across linked detail charts (Trend & MACD/Volume)
+        if (chart === trendChart && volumeChart) {
+            syncXAxis(trendChart, volumeChart);
+            autoScaleY(volumeChart);
+            volumeChart.update('none');
+            updateInsightsFromChart();
+        } else if (chart === volumeChart && trendChart) {
+            syncXAxis(volumeChart, trendChart);
+            autoScaleY(trendChart);
+            trendChart.update('none');
+            updateInsightsFromChart();
+        }
+    }
+});
+
+window.addEventListener('mouseup', () => {
+    if (activeScalingChart) {
+        const chart = activeScalingChart;
+        activeScalingChart = null;
+        if (chart.options.plugins.zoom && chart._panWasEnabled !== undefined) {
+            chart.options.plugins.zoom.pan.enabled = chart._panWasEnabled;
+        }
+    }
+});
+
+// Attach mouse listeners to chart's X-axis area to capture scaling drags
+function setupXAxisDrag(chart) {
+    if (!chart || !chart.canvas) return;
+    const canvas = chart.canvas;
+
+    canvas.addEventListener('mousedown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        // Detect if click occurred inside bottom timeline labels/ticks region
+        if (chart.chartArea && y > chart.chartArea.bottom && x >= chart.chartArea.left && x <= chart.chartArea.right) {
+            activeScalingChart = chart;
+            chart._scaleStartX = e.clientX;
+            
+            const xScale = chart.scales.x;
+            chart._scaleStartRange = xScale.max - xScale.min;
+            
+            // Temporarily disable the panning plugin to prevent default drag-pan behavior
+            if (chart.options.plugins.zoom) {
+                chart._panWasEnabled = chart.options.plugins.zoom.pan.enabled;
+                chart.options.plugins.zoom.pan.enabled = false;
+            }
+            e.preventDefault();
+        }
+    });
+}

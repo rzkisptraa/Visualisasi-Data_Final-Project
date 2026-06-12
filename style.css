@@ -79,6 +79,45 @@ body {
     }
 }
 
+/* Chart timeframe-switch transition */
+@keyframes chartFadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* Applied via JS when a chart is rebuilt after a timeframe switch */
+.chart-tf-enter {
+    animation: chartFadeIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Fading-out state: chart content dims before rebuild */
+.chart-tf-exit {
+    opacity: 0;
+    transition: opacity 0.18s ease;
+    pointer-events: none;
+}
+
+/* KPI count-up entrance: element scales in as number ticks up */
+@keyframes kpiCountIn {
+    from {
+        opacity: 0;
+        transform: scale(0.82) translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* fill-mode: both = opacity:0 applied immediately on class-add (no flash before animation) */
+.kpi-countup {
+    animation: kpiCountIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /* Cards System */
 .card {
     background-color: var(--card-bg);
@@ -203,6 +242,12 @@ body {
     border: 1px solid rgba(156, 163, 175, 0.2);
 }
 
+.badge-info {
+    background-color: rgba(0, 102, 255, 0.08);
+    color: #3385FF;
+    border: 1px solid rgba(0, 102, 255, 0.2);
+}
+
 /* KPI Dashboard Grid */
 .kpi-grid {
     display: grid;
@@ -262,15 +307,19 @@ body {
     padding-top: 0;
 }
 
-/* Main Performance Chart */
-.main-chart-section {
-    width: 100%;
-}
-
 .chart-container {
     position: relative;
     height: 450px;
     width: 100%;
+}
+
+/* Main Performance Chart (doubled to 900px for clearer viewing) */
+.main-chart-section {
+    width: 100%;
+}
+
+.main-chart-section .chart-container {
+    height: 900px;
 }
 
 /* Filter Section */
@@ -505,6 +554,23 @@ body {
     .app-header h1 {
         font-size: 1.25rem;
     }
+
+    .main-chart-section .chart-container {
+        height: 550px;
+    }
+
+    .overview-grid {
+        grid-template-columns: 1fr;
+        gap: 24px;
+    }
+
+    .overview-chart-container {
+        height: 280px;
+    }
+
+    .heatmap-container {
+        min-height: 280px;
+    }
 }
 
 /* Mobile Viewport (< 768px) */
@@ -542,6 +608,23 @@ body {
     
     .chart-container {
         height: 280px;
+    }
+
+    .main-chart-section .chart-container {
+        height: 380px;
+    }
+
+    .overview-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .overview-chart-container {
+        height: 220px;
+    }
+
+    .heatmap-container {
+        min-height: 240px;
     }
     
     .filter-bar {
@@ -598,7 +681,26 @@ body {
     }
 }
 
-/* Hide custom cursor on touch screens */
+/* Custom cursor scaling X mode (TradingView style double-headed arrow) */
+.custom-cursor.scaling-x-mode {
+    width: 20px !important;
+    height: 12px !important;
+    border-radius: 0 !important;
+    border: none !important;
+    background: transparent !important;
+}
+
+.custom-cursor.scaling-x-mode::before {
+    content: '\2194'; /* Unicode double-headed arrow: ↔ */
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 20px;
+    font-family: Arial, sans-serif;
+    color: var(--accent-color);
+    text-shadow: 0 0 4px var(--accent-color);
+    line-height: 1;
 }
 
 /* Ruler Button styles */
@@ -670,4 +772,128 @@ body {
     width: 2px;
     height: 20px;
 }
+
+/* Overview Analytics Section Styles */
+.overview-analytics-section {
+    width: 100%;
+}
+
+.overview-grid {
+    display: grid;
+    grid-template-columns: 1fr 3fr; /* 1/4 and 3/4 columns */
+    gap: 24px;
+}
+
+.overview-chart-card,
+.overview-heatmap-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.overview-chart-container {
+    position: relative;
+    height: 320px;
+    width: 100%;
+    margin-top: 16px;
+}
+
+.heatmap-wrapper {
+    flex-grow: 1;
+    width: 100%;
+    margin-top: 16px;
+}
+
+.heatmap-container {
+    display: grid;
+    /* columns & rows are set dynamically by JS based on |returnPct| magnitude */
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+    height: 100%;
+    min-height: 320px;
+    transition: grid-template-columns 0.6s cubic-bezier(0.4, 0, 0.2, 1),
+                grid-template-rows    0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.heatmap-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    padding: 16px;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), filter var(--transition-fast);
+    text-align: center;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.heatmap-block:hover {
+    transform: scale(1.02);
+    filter: brightness(1.15);
+}
+
+.heatmap-badge {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: #FFFFFF;
+    margin-bottom: 12px;
+    border: 1.5px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.heatmap-ticker {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #FFFFFF;
+    margin-bottom: 4px;
+    letter-spacing: 0.02em;
+}
+
+.heatmap-pct {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+/* Adjust responsive for overview grid */
+@media (max-width: 1024px) {
+    .overview-grid {
+        grid-template-columns: 1fr;
+    }
+    .heatmap-container {
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: auto;
+        min-height: 400px;
+    }
+    .heatmap-block {
+        grid-area: auto !important; /* Reset standard grid area for flow on small screens */
+        min-height: 120px;
+    }
+}
+
+/* Staggered Pop-In Animation for Heatmap Blocks */
+@keyframes heatmapPop {
+    from {
+        opacity: 0;
+        transform: scale(0.94);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.heatmap-block-anim {
+    animation: heatmapPop 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+
+
 
