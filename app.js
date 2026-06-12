@@ -709,16 +709,17 @@ function renderRelativeChart() {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(20, 26, 33, 0.95)',
-                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    borderColor: 'rgba(255, 255, 255, 0.15)',
                     borderWidth: 1,
+                    borderRadius: 6,
                     titleColor: '#FFFFFF',
                     bodyColor: '#E5E7EB',
                     titleFont: { family: 'Inter', size: 12, weight: '600' },
                     bodyFont: { family: 'Inter', size: 11 },
-                    padding: 14,
-                    titleSpacing: 8,
-                    bodySpacing: 6,
+                    padding: 12,
+                    titleSpacing: 6,
+                    bodySpacing: 4,
                     callbacks: {
                         title: function(context) {
                             if (!context || context.length === 0) return "";
@@ -1201,16 +1202,17 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
                 legend: { display: true, labels: { color: '#9CA3AF', font: { family: 'Inter', size: 10 },
                     filter: function(item) { return item.text.includes('MA20') || item.text.includes('MA50'); } } },
                 tooltip: {
-                    backgroundColor: 'rgba(20, 26, 33, 0.95)',
-                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    borderColor: 'rgba(255, 255, 255, 0.15)',
                     borderWidth: 1,
-                    padding: 14,
+                    borderRadius: 6,
+                    padding: 12,
                     titleColor: '#FFFFFF',
                     bodyColor: '#E5E7EB',
                     titleFont: { family: 'Inter', size: 12, weight: '600' },
                     bodyFont: { family: 'Inter', size: 11 },
-                    titleSpacing: 8,
-                    bodySpacing: 6,
+                    titleSpacing: 6,
+                    bodySpacing: 4,
                     callbacks: { label: function(context) {
                         var ds = context.dataset;
                         if (ds.type === 'candlestick') {
@@ -1371,16 +1373,17 @@ function updateMACDChart(resampled, initialMin, initialMax) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(20, 26, 33, 0.95)',
-                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    borderColor: 'rgba(255, 255, 255, 0.15)',
                     borderWidth: 1,
-                    padding: 14,
+                    borderRadius: 6,
+                    padding: 12,
                     titleColor: '#FFFFFF',
                     bodyColor: '#E5E7EB',
                     titleFont: { family: 'Inter', size: 12, weight: '600' },
                     bodyFont: { family: 'Inter', size: 11 },
-                    titleSpacing: 8,
-                    bodySpacing: 6,
+                    titleSpacing: 6,
+                    bodySpacing: 4,
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
@@ -1850,8 +1853,8 @@ const trendChartRulerPlugin = {
             }
             
             // Draw box background
-            ctx.fillStyle = '#0066FF';
-            ctx.strokeStyle = '#3385FF';
+            ctx.fillStyle = 'rgba(0, 102, 255, 0.55)';
+            ctx.strokeStyle = 'rgba(51, 133, 255, 0.8)';
             ctx.lineWidth = 1.5;
             ctx.beginPath();
             if (ctx.roundRect) {
@@ -2404,16 +2407,17 @@ function updateIHSGTrendChart() {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(20, 26, 33, 0.95)',
-                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    borderColor: 'rgba(255, 255, 255, 0.15)',
                     borderWidth: 1,
-                    padding: 12,
+                    borderRadius: 6,
+                    padding: 10,
                     titleColor: '#FFFFFF',
                     bodyColor: '#E5E7EB',
                     titleFont: { family: 'Inter', size: 11, weight: '600' },
                     bodyFont: { family: 'Inter', size: 10 },
-                    titleSpacing: 6,
-                    bodySpacing: 5,
+                    titleSpacing: 5,
+                    bodySpacing: 4,
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
