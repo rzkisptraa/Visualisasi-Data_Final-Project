@@ -281,14 +281,13 @@ function setupKPIs() {
     const statusVal  = document.getElementById('kpi-status-val');
     const statusDesc = document.getElementById('kpi-status-desc');
     if (statusVal) {
+        statusVal.textContent = metaData.status_pasar;
         if (metaData.status_pasar === 'Bullish') {
-            statusVal.textContent = 'Cenderung Naik';
             statusVal.className = 'kpi-value text-success';
-            if (statusDesc) statusDesc.textContent = 'Pasar secara umum sedang menguat';
+            if (statusDesc) statusDesc.textContent = 'IHSG di atas MA50';
         } else {
-            statusVal.textContent = 'Cenderung Turun';
             statusVal.className = 'kpi-value text-danger';
-            if (statusDesc) statusDesc.textContent = 'Pasar secara umum sedang melemah';
+            if (statusDesc) statusDesc.textContent = 'IHSG di bawah MA50';
         }
         triggerCountup(statusVal, STAGGER[1]);
     }
@@ -856,7 +855,7 @@ function updateRelativeChart() {
         }
         
         return {
-            label: ticker === 'IHSG' ? 'IHSG (Pasar)' : ticker,
+            label: ticker === 'IHSG' ? 'IHSG (Benchmark)' : ticker,
             data: alignedData,
             prices: pricesList,
             firstClose: firstClose,
@@ -1172,8 +1171,8 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
             { type: 'candlestick', label: ticker, data: candleData,
               color: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' },
               borderColor: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' } },
-            { type: 'line', label: 'Rata-rata 20 Hari (MA20)', data: ma20Data, borderColor: '#F59E0B', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [4, 3], tension: 0.1, spanGaps: true },
-            { type: 'line', label: 'Rata-rata 50 Hari (MA50)', data: ma50Data, borderColor: '#3B82F6', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [6, 4], tension: 0.1, spanGaps: true }
+            { type: 'line', label: 'MA20', data: ma20Data, borderColor: '#F59E0B', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [4, 3], tension: 0.1, spanGaps: true },
+            { type: 'line', label: 'MA50', data: ma50Data, borderColor: '#3B82F6', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [6, 4], tension: 0.1, spanGaps: true }
         ]},
         plugins: [trendChartRulerPlugin, crosshairPlugin],
         options: {
@@ -1200,7 +1199,7 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
                     }}
                 },
                 legend: { display: true, labels: { color: '#9CA3AF', font: { family: 'Inter', size: 10 },
-                    filter: function(item) { return item.text.includes('MA20') || item.text.includes('MA50'); } } },
+                    filter: function(item) { return item.text === 'MA20' || item.text === 'MA50'; } } },
                 tooltip: {
                     backgroundColor: 'rgba(15, 23, 42, 0.55)',
                     borderColor: 'rgba(255, 255, 255, 0.15)',
@@ -1217,8 +1216,8 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
                         var ds = context.dataset;
                         if (ds.type === 'candlestick') {
                             var d = context.raw;
-                            return ['Pembukaan : Rp '+d.o.toLocaleString('id-ID'), 'Tertinggi : Rp '+d.h.toLocaleString('id-ID'),
-                                    'Terendah  : Rp '+d.l.toLocaleString('id-ID'), 'Penutupan : Rp '+d.c.toLocaleString('id-ID')];
+                            return ['Open : Rp '+d.o.toLocaleString('id-ID'), 'High : Rp '+d.h.toLocaleString('id-ID'),
+                                    'Low  : Rp '+d.l.toLocaleString('id-ID'), 'Close: Rp '+d.c.toLocaleString('id-ID')];
                         }
                         var lbl = ds.label || ''; if (lbl) lbl += ': ';
                         lbl += 'Rp ';
@@ -1288,7 +1287,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
     const datasets = [
         {
             type: 'line',
-            label: 'Garis MACD (Momentum)',
+            label: 'MACD Line',
             data: macdLineData,
             borderColor: '#FFFFFF',
             borderWidth: 1.5,
@@ -1300,7 +1299,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
         },
         {
             type: 'line',
-            label: 'Garis Sinyal',
+            label: 'Signal Line',
             data: signalLineData,
             borderColor: '#3B82F6',
             borderWidth: 1.5,
@@ -1312,7 +1311,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
         },
         {
             type: 'bar',
-            label: 'Histogram (Kekuatan Tren)',
+            label: 'MACD Histogram',
             data: histogramData,
             backgroundColor: barColors,
             borderColor: barColors,
@@ -1473,34 +1472,34 @@ function generateInsights(ticker, stockData, fullResampled) {
     const noteEl = document.getElementById('insights-timeframe-note');
     if (noteEl) {
         let tfText = "";
-        if (currentTimeframe === 'daily') tfText = "HARIAN";
-        else if (currentTimeframe === 'weekly') tfText = "MINGGUAN";
-        else if (currentTimeframe === 'monthly') tfText = "BULANAN";
-        else if (currentTimeframe === 'yearly') tfText = "TAHUNAN";
+        if (currentTimeframe === 'daily') tfText = "DAILY";
+        else if (currentTimeframe === 'weekly') tfText = "WEEKLY";
+        else if (currentTimeframe === 'monthly') tfText = "MONTHLY";
+        else if (currentTimeframe === 'yearly') tfText = "YEARLY";
         noteEl.textContent = tfText;
     }
 
     // 1. Determine Trend Badge & Text
-    let trendBadge = "Tren Netral";
+    let trendBadge = "Neutral";
     let trendBadgeClass = "badge-neutral";
     let trendInsightText = "";
     
     if (close > ma50) {
-        trendBadge = "Tren Naik";
+        trendBadge = "Bullish";
         trendBadgeClass = "badge-bullish";
-        trendInsightText = `sedang dalam <span class="text-success">tren naik</span>. Harga saat ini berada di atas harga rata-rata jangka menengahnya, menandakan dominasi minat beli di pasar.`;
+        trendInsightText = `<span class="text-success">bullish</span>. Harga penutupan terbaru (Rp ${close.toLocaleString('id-ID')}) berada di atas MA50 (Rp ${ma50.toLocaleString('id-ID')}), yang menunjukkan pergerakan tren jangka menengah yang kuat.`;
     } else {
-        trendBadge = "Tren Turun";
+        trendBadge = "Bearish";
         trendBadgeClass = "badge-bearish";
-        trendInsightText = `sedang dalam <span class="text-danger">tren turun</span>. Harga saat ini berada di bawah harga rata-rata jangka menengahnya, menandakan adanya tekanan jual.`;
+        trendInsightText = `<span class="text-danger">bearish</span>. Harga penutupan terbaru (Rp ${close.toLocaleString('id-ID')}) berada di bawah MA50 (Rp ${ma50.toLocaleString('id-ID')}), yang mengindikasikan tekanan jual jangka menengah.`;
     }
     
     // Add short-term MA20 reference
     let shortTermTrend = "";
     if (close > ma20) {
-        shortTermTrend = `Secara jangka pendek, harga saham juga cenderung merangkak naik, mengonfirmasi pergerakan yang positif dalam beberapa hari/minggu terakhir.`;
+        shortTermTrend = `Di jangka pendek, harga juga diperdagangkan di atas MA20 (Rp ${ma20.toLocaleString('id-ID')}), mengonfirmasi kekuatan momentum beli saat ini.`;
     } else {
-        shortTermTrend = `Secara jangka pendek, harga saham menunjukkan pelemahan, mengindikasikan adanya koreksi turun baru-baru ini.`;
+        shortTermTrend = `Di jangka pendek, harga tertekan di bawah MA20 (Rp ${ma20.toLocaleString('id-ID')}), menunjukkan adanya pelemahan tren jangka pendek.`;
     }
     
     // Update Trend Badge
@@ -1523,32 +1522,32 @@ function generateInsights(ticker, stockData, fullResampled) {
     const prevIdx = latestIdx > 0 ? latestIdx - 1 : latestIdx;
     const prevHist = latestIdx !== -1 ? macdData.histogram[prevIdx] : (macdData.histogram[macdData.histogram.length - 2] || latestHist);
     
-    let momentumBadge = "Dorongan Netral";
+    let momentumBadge = "Momentum Neutral";
     let momentumBadgeClass = "badge-neutral";
     let momentumInsightText = "";
     
     if (latestMacd > latestSignal) {
-        momentumBadge = "Dorongan Naik";
+        momentumBadge = "Momentum Bullish";
         momentumBadgeClass = "badge-bullish";
-        momentumInsightText = `Kekuatan pergerakan harga saat ini <span class="text-success">menguat (dorongan naik)</span>. `;
+        momentumInsightText = `Indikator MACD menunjukkan momentum <span class="text-success">bullish</span>. MACD Line (Rp ${latestMacd.toLocaleString('id-ID', { maximumFractionDigits: 2 })}) berada di atas Signal Line (Rp ${latestSignal.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), yang mengindikasikan kekuatan tren naik. `;
     } else {
-        momentumBadge = "Dorongan Turun";
+        momentumBadge = "Momentum Bearish";
         momentumBadgeClass = "badge-bearish";
-        momentumInsightText = `Kekuatan pergerakan harga saat ini <span class="text-danger">melemah (dorongan turun)</span>. `;
+        momentumInsightText = `Indikator MACD menunjukkan momentum <span class="text-danger">bearish</span>. MACD Line (Rp ${latestMacd.toLocaleString('id-ID', { maximumFractionDigits: 2 })}) berada di bawah Signal Line (Rp ${latestSignal.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), yang mengindikasikan tekanan turun. `;
     }
     
     // Add Histogram description
     if (latestHist > 0) {
         if (latestHist > prevHist) {
-            momentumInsightText += `Dorongan beli terlihat semakin kuat dan solid.`;
+            momentumInsightText += `Histogram MACD bernilai positif dan menguat (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), menunjukkan akselerasi kekuatan beli.`;
         } else {
-            momentumInsightText += `Meskipun masih dalam tren naik, kecepatan kenaikannya mulai melambat.`;
+            momentumInsightText += `Histogram MACD bernilai positif namun mulai melemah (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), mengindikasikan perlambatan momentum beli.`;
         }
     } else {
         if (latestHist < prevHist) {
-            momentumInsightText += `Tekanan jual terlihat semakin membesar dari waktu ke waktu.`;
+            momentumInsightText += `Histogram MACD bernilai negatif dan memburuk (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), menunjukkan akselerasi kekuatan jual.`;
         } else {
-            momentumInsightText += `Tekanan jual mulai mereda, membuka peluang bagi harga untuk mulai stabil atau berbalik naik.`;
+            momentumInsightText += `Histogram MACD bernilai negatif namun mulai mengecil/membaik (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), mengindikasikan pelemahan momentum jual (potensi pembalikan arah naik).`;
         }
     }
     
@@ -1561,13 +1560,11 @@ function generateInsights(ticker, stockData, fullResampled) {
     // 3. Performance vs IHSG Text
     let relativePerformanceText = "";
     const isOutperformer = parseFloat(stockReturn) > parseFloat(ihsgReturn);
-    const formattedStockReturn = (parseFloat(stockReturn) >= 0 ? '+' : '') + stockReturn;
-    const formattedIhsgReturn = (parseFloat(ihsgReturn) >= 0 ? '+' : '') + ihsgReturn;
     
     if (isOutperformer) {
-        relativePerformanceText = `Saham <strong>${ticker}</strong> tampil <span class="text-success">lebih unggul</span> dibandingkan dengan rata-rata pasar (IHSG). Selama periode ini, saham ${ticker} membukukan imbal hasil <strong>${formattedStockReturn}%</strong> sedangkan pasar (IHSG) hanya mencatat <strong>${formattedIhsgReturn}%</strong>.`;
+        relativePerformanceText = `Saham <strong>${ticker}</strong> berhasil <span class="text-success">mengungguli</span> indeks IHSG (Outperformer) selama rentang waktu visualisasi ini, dengan total imbal hasil sebesar <strong>${stockReturn}%</strong> dibandingkan IHSG yang sebesar <strong>${ihsgReturn}%</strong>.`;
     } else {
-        relativePerformanceText = `Saham <strong>${ticker}</strong> tampil <span class="text-danger">tertinggal</span> dibandingkan dengan rata-rata pasar (IHSG). Selama periode ini, saham ${ticker} mencatat imbal hasil <strong>${formattedStockReturn}%</strong> sementara pasar (IHSG) mencatat <strong>${formattedIhsgReturn}%</strong>.`;
+        relativePerformanceText = `Saham <strong>${ticker}</strong> bergerak <span class="text-danger">tertinggal</span> dibandingkan indeks IHSG (Underperformer) selama rentang waktu visualisasi ini, dengan imbal hasil total sebesar <strong>${stockReturn}%</strong> dibandingkan IHSG yang sebesar <strong>${ihsgReturn}%</strong>.`;
     }
     
     // 4. Determine Confirmation Text
@@ -1576,26 +1573,26 @@ function generateInsights(ticker, stockData, fullResampled) {
     const isMacdBullish = latestMacd > latestSignal;
     
     if (isPriceBullish && isMacdBullish) {
-        confirmationText = `Kenaikan harga saham didukung penuh oleh dorongan pasar yang kuat. Ini adalah tanda positif bahwa tren kenaikan kemungkinan besar masih akan berlanjut.`;
+        confirmationText = `Pergerakan harga yang berada di atas MA50 terkonfirmasi oleh MACD Crossover Bullish. Ini menunjukkan tren kenaikan harga jangka menengah didukung oleh momentum beli yang solid, memberikan indikasi kelanjutan tren naik.`;
     } else if (isPriceBullish && !isMacdBullish) {
-        confirmationText = `Meskipun harga secara umum masih dalam tren naik, dorongan naiknya mulai kehilangan tenaga. Harap berhati-hati terhadap potensi penurunan harga sementara (koreksi).`;
+        confirmationText = `Meskipun harga saham masih berada di atas MA50 (tren naik), indikator MACD menunjukkan crossover bearish. Hal ini mengindikasikan adanya perlambatan momentum atau potensi divergensi negatif, memperingatkan pelaku pasar akan kemungkinan terjadinya koreksi harga jangka pendek.`;
     } else if (!isPriceBullish && !isMacdBullish) {
-        confirmationText = `Penurunan harga saham dipicu oleh tekanan jual yang masih kuat di pasar. Penurunan harga kemungkinan masih akan berlanjut.`;
+        confirmationText = `Pergerakan harga yang berada di bawah MA50 terkonfirmasi oleh MACD Crossover Bearish. Ini menunjukkan tren penurunan harga jangka menengah didukung oleh momentum jual yang solid, memberikan indikasi kelanjutan tren turun.`;
     } else {
-        confirmationText = `Meskipun harga masih cenderung turun, mulai terlihat dorongan beli yang mencoba menahan kejatuhan harga. Ini bisa menjadi sinyal awal pemulihan harga.`;
+        confirmationText = `Meskipun harga saham berada di bawah MA50 (tren turun), indikator MACD menunjukkan crossover bullish. Hal ini mengindikasikan adanya pelemahan tekanan jual atau potensi pembalikan arah tren (rebound) jangka pendek.`;
     }
     
     // Assemble final bullet points
     let htmlContent = `
-        <p>Analisis pergerakan saham <strong>${TICKER_NAMES[ticker]} (${ticker})</strong> dalam periode yang dipilih menunjukkan kondisi berikut:</p>
+        <p>Berdasarkan analisis data penutupan historis dan momentum MACD untuk saham <strong>${TICKER_NAMES[ticker]} (${ticker})</strong> dalam rentang waktu yang ditampilkan, berikut rangkuman analisis tren dan momentumnya:</p>
         <ul>
-            <li><strong>Kinerja:</strong> ${relativePerformanceText}</li>
-            <li><strong>Arah Tren:</strong> Saham ${ticker} saat ini ${trendInsightText} ${shortTermTrend}</li>
-            <li><strong>Kekuatan Naik/Turun (Momentum):</strong> ${momentumInsightText}</li>
-            <li><strong>Kesimpulan:</strong> ${confirmationText}</li>
+            <li><strong>Performa:</strong> ${relativePerformanceText}</li>
+            <li><strong>Tren:</strong> Saham ${ticker} saat ini menunjukkan tren ${trendInsightText} ${shortTermTrend}</li>
+            <li><strong>Momentum:</strong> ${momentumInsightText}</li>
+            <li><strong>Konfirmasi:</strong> ${confirmationText}</li>
         </ul>
         <p style="margin-top: 16px; font-size: 0.9rem; color: var(--text-secondary); font-style: italic;">
-            *Catatan: Analisis ini otomatis dihasilkan dari data historis terbaru dan bukan merupakan saran investasi resmi.
+            *Catatan: Analisis ini diperbarui secara otomatis berdasarkan data transaksi penutupan terakhir dan tidak ditujukan sebagai rekomendasi finansial mutlak.
         </p>
     `;
     
