@@ -100,14 +100,14 @@ async function initDashboard() {
             fetch('data/prices.json?t=' + Date.now()),
             fetch('data/meta.json?t=' + Date.now())
         ]);
-        
+
         if (!pricesRes.ok || !metaRes.ok) {
             throw new Error('Failed to fetch data files');
         }
-        
+
         pricesData = await pricesRes.json();
         metaData = await metaRes.json();
-        
+
         // Pre-calculate rebased return for each stock relative to its first active day (IPO date)
         Object.keys(pricesData).forEach(ticker => {
             const data = pricesData[ticker];
@@ -121,17 +121,17 @@ async function initDashboard() {
                 }
             });
         });
-        
+
         // Setup metadata & KPI counters
         setupMetadata();
         setupKPIs();
-        
+
         // Render Chart 1 (Relative Performance)
         renderRelativeChart();
-        
+
         // Init Selected Stock detail charts and insights
         const stockSelect = document.getElementById('stock-select');
-        
+
         // Setup global timeframe button selector (controls trend & volume charts only)
         const tfSelector = document.getElementById('timeframe-selector');
         tfSelector.querySelectorAll('.tf-btn').forEach(btn => {
@@ -156,7 +156,15 @@ async function initDashboard() {
                 transitionRelativeChart(() => updateRelativeChart());
             });
         });
-        
+
+        // Setup start year select listener
+        const startYearSelect = document.getElementById('start-year-select');
+        if (startYearSelect) {
+            startYearSelect.addEventListener('change', () => {
+                transitionRelativeChart(() => updateRelativeChart());
+            });
+        }
+
         // Setup heatmap & simple IHSG timeframe button selector (locks them together)
         const heatTfSelector = document.getElementById('heatmap-timeframe-selector');
         if (heatTfSelector) {
@@ -169,34 +177,34 @@ async function initDashboard() {
                 });
             });
         }
-        
+
         // Setup initial view
         updateAllViews();
-        
+
         // Setup interactive chart controls & export utilities
         setupChartActions();
-        
+
         // Setup ruler measurement tool button and event handlers
         setupRulerToggle();
         setupRulerEvents();
-        
+
         // Setup crosshair event handlers
         setupCrosshairEvents();
-        
+
         // Add dropdown change listener — transition detail charts on stock switch
         stockSelect.addEventListener('change', (e) => {
             transitionDetailCharts(() => updateSelectedStockView(e.target.value));
         });
-        
+
         // Add double-click listeners on canvases for zoom reset
         const relativeCanvas = document.getElementById('relativePerformanceChart');
         const trendCanvas = document.getElementById('trendChart');
         const volumeCanvas = document.getElementById('volumeChart');
-        
+
         relativeCanvas.addEventListener('dblclick', () => {
             handleChartReset(relativeChart);
         });
-        
+
         trendCanvas.addEventListener('dblclick', () => {
             handleChartReset(trendChart);
             if (volumeChart) {
@@ -204,7 +212,7 @@ async function initDashboard() {
             }
             updateInsightsFromChart();
         });
-        
+
         volumeCanvas.addEventListener('dblclick', () => {
             handleChartReset(trendChart);
             if (volumeChart) {
@@ -212,7 +220,14 @@ async function initDashboard() {
             }
             updateInsightsFromChart();
         });
-        
+
+        // Align Mulai Tahun dropdown width with relative timeframe selector
+        alignStartYearDropdown();
+        window.addEventListener('resize', alignStartYearDropdown);
+        setTimeout(alignStartYearDropdown, 100);
+        setTimeout(alignStartYearDropdown, 300);
+        setTimeout(alignStartYearDropdown, 800);
+
     } catch (error) {
         console.error('Initialization error:', error);
         document.getElementById('analysis-insights-box').innerHTML = `
@@ -238,19 +253,19 @@ function animateValue(target, start, end, duration, decimalPlaces, prefix, suffi
     if (decimalPlaces === undefined) decimalPlaces = 0;
     if (prefix === undefined) prefix = "";
     if (suffix === undefined) suffix = "";
-    
+
     const obj = (typeof target === 'string') ? document.getElementById(target) : target;
     if (!obj) return;
 
     const isNegative = end < 0;
-    const absoluteEnd   = Math.abs(end);
+    const absoluteEnd = Math.abs(end);
     const absoluteStart = Math.abs(start);
 
     let startTimestamp = null;
 
     const step = (timestamp) => {
         if (!startTimestamp) startTimestamp = timestamp;
-        const elapsed  = timestamp - startTimestamp;
+        const elapsed = timestamp - startTimestamp;
         const rawProgress = Math.min(elapsed / duration, 1);
         const easedProgress = easeOutCubic(rawProgress);  // fast-start, slow-end
         const currentVal = absoluteStart + easedProgress * (absoluteEnd - absoluteStart);
@@ -284,7 +299,7 @@ function triggerCountup(el, delayMs) {
 /// Setup KPIs with count-up animations — restarts on every page load / refresh
 function setupKPIs() {
     const COUNT_DURATION = 3750; // ms  (5× slower than original 750ms)
-    const CSS_ANIM_MS    = 600;  // match .kpi-countup animation duration
+    const CSS_ANIM_MS = 600;  // match .kpi-countup animation duration
 
     // Stagger delays per card (CSS pop-in start offset)
     const STAGGER = [0, 150, 300, 450];
@@ -294,51 +309,96 @@ function setupKPIs() {
         prefix = prefix || '';
         suffix = suffix || '';
         const el = document.getElementById(elId);
-        const cssDelay   = STAGGER[staggerIdx];          // when CSS anim starts
+        const cssDelay = STAGGER[staggerIdx];          // when CSS anim starts
         const countStart = cssDelay + CSS_ANIM_MS;       // count-up starts after anim shows element
         triggerCountup(el, cssDelay);
-        setTimeout(function() {
+        setTimeout(function () {
             animateValue(elId, 0, targetVal, COUNT_DURATION, decimals, prefix, suffix);
         }, countStart);
     }
 
-    // KPI 1: IHSG Current Close
-    popAndCount('kpi-ihsg-val', metaData.ihsg_current, 2, '', '', 0);
+    // Get the weekly resampled IHSG data
+    const rawIHSG = pricesData["IHSG"];
+    const weeklyIHSG = resampleDataset(rawIHSG, 'weekly');
+    const latestIHSG = weeklyIHSG[weeklyIHSG.length - 1];
+    const latestIHSGClose = latestIHSG ? latestIHSG.close : metaData.ihsg_current;
 
-    // KPI 2: Status Pasar — text label, pop-in only (no count-up)
-    const statusVal  = document.getElementById('kpi-status-val');
+    // KPI 1: IHSG Current Close
+    popAndCount('kpi-ihsg-val', latestIHSGClose, 2, '', '', 0);
+
+    // KPI 2: Status Pasar Weekly (comparing weekly close vs weekly MA50)
+    const statusVal = document.getElementById('kpi-status-val');
     const statusDesc = document.getElementById('kpi-status-desc');
-    if (statusVal) {
-        statusVal.textContent = metaData.status_pasar;
-        if (metaData.status_pasar === 'Bullish') {
+    if (statusVal && latestIHSG) {
+        const weeklyClose = latestIHSG.close;
+        const weeklyMA50 = latestIHSG.ma50;
+        
+        const isBullish = weeklyMA50 !== null && weeklyClose > weeklyMA50;
+        const statusText = isBullish ? 'Bullish' : 'Bearish';
+        
+        statusVal.textContent = statusText;
+        if (isBullish) {
             statusVal.className = 'kpi-value text-success';
-            if (statusDesc) statusDesc.textContent = 'IHSG di atas MA50';
+            if (statusDesc) statusDesc.textContent = 'IHSG di atas MA50 (Weekly)';
         } else {
             statusVal.className = 'kpi-value text-danger';
-            if (statusDesc) statusDesc.textContent = 'IHSG di bawah MA50';
+            if (statusDesc) statusDesc.textContent = 'IHSG di bawah MA50 (Weekly)';
         }
         triggerCountup(statusVal, STAGGER[1]);
     }
 
-    // KPI 3: Top Outperformer — inner span gets count-up
-    var topOut    = metaData.top_outperformer;
-    var topOutEl  = document.getElementById('kpi-outperformer-val');
-    if (topOutEl) {
-        topOutEl.innerHTML = topOut.ticker + ' <span id="top-out-pct">( 0,0%)</span>';
+    // Calculate weekly returns for all stocks (excluding IHSG) based on the latest week's open-to-close return
+    const stockReturns = {};
+    Object.keys(pricesData).forEach(ticker => {
+        if (ticker === 'IHSG') return;
+        const weeklyData = resampleDataset(pricesData[ticker], 'weekly');
+        if (weeklyData && weeklyData.length > 0) {
+            const latestItem = weeklyData[weeklyData.length - 1];
+            if (latestItem && latestItem.open > 0) {
+                stockReturns[ticker] = ((latestItem.close - latestItem.open) / latestItem.open) * 100;
+            } else {
+                stockReturns[ticker] = 0;
+            }
+        } else {
+            stockReturns[ticker] = 0;
+        }
+    });
+
+    // Determine top outperformer and top underperformer
+    let topOutTicker = null;
+    let topOutVal = -Infinity;
+    let topUnderTicker = null;
+    let topUnderVal = Infinity;
+
+    Object.keys(stockReturns).forEach(ticker => {
+        const ret = stockReturns[ticker];
+        if (ret > topOutVal) {
+            topOutVal = ret;
+            topOutTicker = ticker;
+        }
+        if (ret < topUnderVal) {
+            topUnderVal = ret;
+            topUnderTicker = ticker;
+        }
+    });
+
+    // KPI 3: Top Outperformer Weekly
+    var topOutEl = document.getElementById('kpi-outperformer-val');
+    if (topOutEl && topOutTicker) {
+        topOutEl.innerHTML = topOutTicker + ' <span id="top-out-pct">( 0,0%)</span>';
         triggerCountup(topOutEl, STAGGER[2]);
-        setTimeout(function() {
-            animateValue('top-out-pct', 0, topOut.return, COUNT_DURATION, 1, '(', '%)');
+        setTimeout(function () {
+            animateValue('top-out-pct', 0, topOutVal, COUNT_DURATION, 1, '(', '%)');
         }, STAGGER[2] + CSS_ANIM_MS);
     }
 
-    // KPI 4: Top Underperformer — inner span gets count-up
-    var topUnder   = metaData.top_underperformer;
+    // KPI 4: Top Underperformer Weekly
     var topUnderEl = document.getElementById('kpi-underperformer-val');
-    if (topUnderEl) {
-        topUnderEl.innerHTML = topUnder.ticker + ' <span id="top-under-pct">( 0,0%)</span>';
+    if (topUnderEl && topUnderTicker) {
+        topUnderEl.innerHTML = topUnderTicker + ' <span id="top-under-pct">( 0,0%)</span>';
         triggerCountup(topUnderEl, STAGGER[3]);
-        setTimeout(function() {
-            animateValue('top-under-pct', 0, topUnder.return, COUNT_DURATION, 1, '(', '%)');
+        setTimeout(function () {
+            animateValue('top-under-pct', 0, topUnderVal, COUNT_DURATION, 1, '(', '%)');
         }, STAGGER[3] + CSS_ANIM_MS);
     }
 }
@@ -361,7 +421,7 @@ function getResampledLength(ticker) {
 // Resample daily prices data based on timeframe
 function resampleDataset(data, timeframe) {
     if (timeframe === 'daily') return data;
-    
+
     const groups = {};
     data.forEach(item => {
         let key;
@@ -372,37 +432,63 @@ function resampleDataset(data, timeframe) {
         } else if (timeframe === 'yearly') {
             key = item.date.substring(0, 4);
         }
-        
+
         if (!groups[key]) {
             groups[key] = [];
         }
         groups[key].push(item);
     });
-    
+
     const resampled = [];
     Object.keys(groups).sort().forEach(key => {
         const group = groups[key];
         const firstItem = group[0];
-        const lastItem  = group[group.length - 1];
-        
+        const lastItem = group[group.length - 1];
+
         // Aggregate OHLC and volume properly across the period
         const periodHigh = Math.max(...group.map(g => g.high));
-        const periodLow  = Math.min(...group.map(g => g.low));
+        const periodLow = Math.min(...group.map(g => g.low));
         const periodVolume = group.reduce((sum, g) => sum + g.volume, 0);
-        
+
         // Determine warna_volume based on period close vs period open
         const warnaVolume = (lastItem.close >= firstItem.open) ? '#12C286' : '#FF5555';
-        
+
         resampled.push({
             ...lastItem,
-            open:   firstItem.open,
-            high:   periodHigh,
-            low:    periodLow,
-            close:  lastItem.close,
+            open: firstItem.open,
+            high: periodHigh,
+            low: periodLow,
+            close: lastItem.close,
             volume: periodVolume,
             warna_volume: warnaVolume
         });
     });
+
+    // Calculate rolling SMA20 and SMA50 of resampled closing prices
+    for (let i = 0; i < resampled.length; i++) {
+        // MA20
+        if (i >= 19) {
+            let sum20 = 0;
+            for (let j = i - 19; j <= i; j++) {
+                sum20 += resampled[j].close;
+            }
+            resampled[i].ma20 = sum20 / 20;
+        } else {
+            resampled[i].ma20 = null;
+        }
+
+        // MA50
+        if (i >= 49) {
+            let sum50 = 0;
+            for (let j = i - 49; j <= i; j++) {
+                sum50 += resampled[j].close;
+            }
+            resampled[i].ma50 = sum50 / 50;
+        } else {
+            resampled[i].ma50 = null;
+        }
+    }
+
     return resampled;
 }
 
@@ -419,7 +505,7 @@ function getMondayDate(dateStr) {
 function findVisibleRange(dataArray, xMin, xMax, isTimeScale) {
     let start = 0;
     let end = dataArray.length - 1;
-    
+
     if (isTimeScale) {
         // Binary search for first index >= xMin
         let low = 0, high = dataArray.length - 1;
@@ -433,7 +519,7 @@ function findVisibleRange(dataArray, xMin, xMax, isTimeScale) {
                 low = mid + 1;
             }
         }
-        
+
         // Binary search for last index <= xMax
         low = start;
         high = dataArray.length - 1;
@@ -452,7 +538,7 @@ function findVisibleRange(dataArray, xMin, xMax, isTimeScale) {
         start = Math.max(0, Math.floor(xMin));
         end = Math.min(dataArray.length - 1, Math.ceil(xMax));
     }
-    
+
     return { start, end };
 }
 
@@ -460,24 +546,24 @@ function findVisibleRange(dataArray, xMin, xMax, isTimeScale) {
 // Handles both plain numbers (index-based axis) and OHLC/line objects ({x, o, h, l, c} or {x, y})
 function autoScaleY(chart) {
     if (!chart) return;
-    
+
     // Safely ensure chart.options.scales structures exist to avoid errors
     if (!chart.options) chart.options = {};
     if (!chart.options.scales) chart.options.scales = {};
     if (!chart.options.scales.x) chart.options.scales.x = {};
     if (!chart.options.scales.y) chart.options.scales.y = {};
-    
+
     // Prioritize options (target range for update) over current scales (rendered range of previous frame)
     let xMin = chart.options.scales.x.min !== undefined ? chart.options.scales.x.min : (chart.scales && chart.scales.x ? chart.scales.x.min : undefined);
     let xMax = chart.options.scales.x.max !== undefined ? chart.options.scales.x.max : (chart.scales && chart.scales.x ? chart.scales.x.max : undefined);
-    
+
     const hasRange = xMin !== undefined && xMax !== undefined && xMin !== null && xMax !== null;
-    
+
     // Track min/max values dynamically by Y-axis ID (default is 'y')
     const boundsByAxis = {};
-    
+
     const isTimeScale = chart.options.scales.x && (chart.options.scales.x.type === 'time' || chart.options.scales.x.type === 'timeseries');
-    
+
     if (chart.data && chart.data.datasets) {
         chart.data.datasets.forEach((dataset, dsIndex) => {
             // Safely check dataset visibility without requiring scales to be fully rendered
@@ -488,16 +574,16 @@ function autoScaleY(chart) {
                 isVisible = dataset.hidden !== true;
             }
             if (!isVisible) return;
-            
+
             const axisID = dataset.yAxisID || 'y';
             if (!boundsByAxis[axisID]) {
                 boundsByAxis[axisID] = { min: Infinity, max: -Infinity };
             }
             const bounds = boundsByAxis[axisID];
-            
+
             const dataArray = dataset.data || [];
             if (dataArray.length === 0) return;
-            
+
             let start = 0;
             let end = dataArray.length - 1;
             if (hasRange) {
@@ -505,13 +591,13 @@ function autoScaleY(chart) {
                 start = range.start;
                 end = range.end;
             }
-            
+
             for (let idx = start; idx <= end; idx++) {
                 const item = dataArray[idx];
                 if (item === null || item === undefined) continue;
-                
+
                 let valMin, valMax;
-                
+
                 if (isTimeScale) {
                     if (item.o !== undefined && item.h !== undefined && item.l !== undefined && item.c !== undefined) {
                         valMin = item.l;
@@ -528,16 +614,16 @@ function autoScaleY(chart) {
                     valMin = val;
                     valMax = val;
                 }
-                
+
                 if (valMin === null || valMin === undefined || isNaN(valMin)) continue;
                 if (valMax === null || valMax === undefined || isNaN(valMax)) continue;
-                
+
                 if (valMin < bounds.min) bounds.min = valMin;
                 if (valMax > bounds.max) bounds.max = valMax;
             }
         });
     }
-    
+
     // Apply Y-axis range limits to each axis config
     Object.keys(boundsByAxis).forEach(axisID => {
         const bounds = boundsByAxis[axisID];
@@ -545,7 +631,7 @@ function autoScaleY(chart) {
             if (!chart.options.scales[axisID]) {
                 chart.options.scales[axisID] = {};
             }
-            
+
             if (chart.canvas && chart.canvas.id === 'volumeChart') {
                 const maxAbs = Math.max(Math.abs(bounds.min), Math.abs(bounds.max));
                 const finalMax = maxAbs || 1.0;
@@ -565,10 +651,10 @@ function autoScaleY(chart) {
 // Fades out Chart 2 (trendChart) + Chart 3 (volumeChart), rebuilds them,
 // then plays a slide-up fade-in entrance on each container.
 function transitionDetailCharts(updateFn) {
-    const trendCanvas    = document.getElementById('trendChart');
-    const volumeCanvas   = document.getElementById('volumeChart');
-    const trendWrapper   = trendCanvas  ? trendCanvas.closest('.chart-container')  : null;
-    const volumeWrapper  = volumeCanvas ? volumeCanvas.closest('.chart-container') : null;
+    const trendCanvas = document.getElementById('trendChart');
+    const volumeCanvas = document.getElementById('volumeChart');
+    const trendWrapper = trendCanvas ? trendCanvas.closest('.chart-container') : null;
+    const volumeWrapper = volumeCanvas ? volumeCanvas.closest('.chart-container') : null;
 
     // Step 1 — fade out
     [trendWrapper, volumeWrapper].forEach(el => {
@@ -599,7 +685,7 @@ function transitionDetailCharts(updateFn) {
 
 // Same transition for the Relative Performance chart (Chart 1).
 function transitionRelativeChart(updateFn) {
-    const canvas  = document.getElementById('relativePerformanceChart');
+    const canvas = document.getElementById('relativePerformanceChart');
     const wrapper = canvas ? canvas.closest('.chart-container') : null;
 
     if (wrapper) { wrapper.classList.remove('chart-tf-enter'); wrapper.classList.add('chart-tf-exit'); }
@@ -619,13 +705,13 @@ function transitionRelativeChart(updateFn) {
 function syncXAxis(sourceChart, targetChart) {
     if (!sourceChart || !targetChart || isSyncing) return;
     isSyncing = true;
-    
+
     const sourceMin = sourceChart.scales.x.min;
     const sourceMax = sourceChart.scales.x.max;
-    
+
     targetChart.options.scales.x.min = sourceMin;
     targetChart.options.scales.x.max = sourceMax;
-    
+
     targetChart.update('none');
     isSyncing = false;
 }
@@ -642,10 +728,10 @@ function getDefaultZoom(N, timeframe) {
 
 // Returns the appropriate Chart.js time unit for the current timeframe
 function getTimeUnit() {
-    if (currentTimeframe === 'daily')   return 'day';
-    if (currentTimeframe === 'weekly')  return 'week';
+    if (currentTimeframe === 'daily') return 'day';
+    if (currentTimeframe === 'weekly') return 'week';
     if (currentTimeframe === 'monthly') return 'month';
-    if (currentTimeframe === 'yearly')  return 'year';
+    if (currentTimeframe === 'yearly') return 'year';
     return 'day';
 }
 
@@ -658,16 +744,16 @@ function getVisibleStockData(chart, resampledData) {
         if (chart === ihsgTrendChart) tf = heatmapTimeframe;
         return resampledData.slice(Math.max(0, N - getDefaultZoom(N, tf)));
     }
-    
+
     const isTimeScale = chart.options.scales.x.type === 'timeseries' || chart.options.scales.x.type === 'time';
-    
+
     if (isTimeScale) {
         const xMin = chart.scales.x.min;
         const xMax = chart.scales.x.max;
-        
+
         let start = 0;
         let end = resampledData.length - 1;
-        
+
         // Binary search for first index >= xMin
         let low = 0, high = resampledData.length - 1;
         while (low <= high) {
@@ -681,7 +767,7 @@ function getVisibleStockData(chart, resampledData) {
                 low = mid + 1;
             }
         }
-        
+
         // Binary search for last index <= xMax
         low = start;
         high = resampledData.length - 1;
@@ -715,22 +801,22 @@ function updateInsightsFromChart() {
 // Handle double click reset interaction
 function handleChartReset(chart) {
     if (!chart) return;
-    
+
     const isTimeScale = chart.options.scales.x.type === 'timeseries' || chart.options.scales.x.type === 'time';
     let tf = currentTimeframe;
     if (chart === relativeChart) tf = relativeTimeframe;
     if (chart === ihsgTrendChart) tf = heatmapTimeframe;
-    
+
     if (isTimeScale) {
         const dataset = chart.data.datasets[0];
         if (dataset && dataset.data && dataset.data.length > 0) {
             const data = dataset.data;
             const N = data.length;
             const defaultZoom = getDefaultZoom(N, tf);
-            
+
             const minIndex = Math.max(0, N - defaultZoom);
             const maxIndex = N - 1;
-            
+
             chart.options.scales.x.min = data[minIndex].x;
             chart.options.scales.x.max = data[maxIndex].x;
         }
@@ -740,7 +826,7 @@ function handleChartReset(chart) {
         chart.options.scales.x.min = Math.max(0, N - defaultZoom);
         chart.options.scales.x.max = N - 1;
     }
-    
+
     autoScaleY(chart);
     chart.update('none');
 }
@@ -748,7 +834,7 @@ function handleChartReset(chart) {
 // Chart 1: Performa Relatif
 function renderRelativeChart() {
     const ctx = document.getElementById('relativePerformanceChart').getContext('2d');
-    
+
     relativeChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -775,7 +861,7 @@ function renderRelativeChart() {
                     pan: {
                         enabled: true,
                         mode: 'x',
-                        onPan: ({chart}) => {
+                        onPan: ({ chart }) => {
                             autoScaleY(chart);
                             chart.update('none');
                         }
@@ -789,7 +875,7 @@ function renderRelativeChart() {
                             enabled: true
                         },
                         mode: 'x',
-                        onZoom: ({chart}) => {
+                        onZoom: ({ chart }) => {
                             autoScaleY(chart);
                             chart.update('none');
                         }
@@ -806,7 +892,7 @@ function renderRelativeChart() {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    backgroundColor: '#0B0F14',
                     borderColor: 'rgba(255, 255, 255, 0.15)',
                     borderWidth: 1,
                     borderRadius: 6,
@@ -817,22 +903,27 @@ function renderRelativeChart() {
                     padding: 12,
                     titleSpacing: 6,
                     bodySpacing: 4,
+                    itemSort: function (a, b) {
+                        const valA = (a.parsed && a.parsed.y !== null && a.parsed.y !== undefined) ? a.parsed.y : -Infinity;
+                        const valB = (b.parsed && b.parsed.y !== null && b.parsed.y !== undefined) ? b.parsed.y : -Infinity;
+                        return valB - valA;
+                    },
                     callbacks: {
-                        title: function(context) {
+                        title: function (context) {
                             if (!context || context.length === 0) return "";
                             const dateStr = context[0].label;
                             const d = new Date(dateStr);
                             if (isNaN(d.getTime())) return dateStr;
                             return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
                         },
-                        label: function(context) {
+                        label: function (context) {
                             let label = context.dataset.label || '';
                             if (label) label += ': ';
                             if (context.parsed.y !== null) {
                                 const val = context.parsed.y;
                                 const sign = val > 0 ? '+' : '';
                                 label += sign + val.toFixed(2) + '%';
-                                
+
                                 // Add actual price validation to tooltip
                                 const dataIndex = context.dataIndex;
                                 const prices = context.dataset.prices;
@@ -876,13 +967,13 @@ function renderRelativeChart() {
                         font: { family: 'Inter', size: 11, weight: '500' },
                         maxTicksLimit: 12,
                         padding: 10,
-                        callback: function(value, index, values) {
+                        callback: function (value, index, values) {
                             if (!relativeChart) return "";
-                            const dateStr = relativeChart.data.labels[index];
+                            const dateStr = relativeChart.data.labels[value];
                             if (!dateStr) return "";
                             const d = new Date(dateStr);
                             if (isNaN(d.getTime())) return dateStr;
-                            
+
                             if (relativeTimeframe === 'yearly') {
                                 return d.toLocaleDateString('id-ID', { year: 'numeric' });
                             } else if (relativeTimeframe === 'monthly') {
@@ -899,7 +990,7 @@ function renderRelativeChart() {
                         color: '#9CA3AF',
                         font: { family: 'Inter', size: 11, weight: '500' },
                         padding: 10,
-                        callback: function(value) { return value.toFixed(0) + '%'; }
+                        callback: function (value) { return value.toFixed(0) + '%'; }
                     }
                 }
             }
@@ -911,52 +1002,98 @@ function renderRelativeChart() {
 
 // Helper to map relative timeframe to Chart.js time scale unit
 function getRelativeTimeUnit(timeframe) {
-    if (timeframe === 'daily')   return 'day';
-    if (timeframe === 'weekly')  return 'week';
+    if (timeframe === 'daily') return 'day';
+    if (timeframe === 'weekly') return 'week';
     if (timeframe === 'monthly') return 'month';
-    if (timeframe === 'yearly')  return 'year';
+    if (timeframe === 'yearly') return 'year';
     return 'day';
 }
 
 // Update Chart 1 dynamically based on resampled and sliced datasets
 function updateRelativeChart() {
     if (!relativeChart || !pricesData) return;
-    
+
+    const startYearSelect = document.getElementById('start-year-select');
+    const startYear = startYearSelect ? startYearSelect.value : 'all';
+
+    // Update subtitle text dynamically
+    const subtitleEl = document.getElementById('relative-chart-subtitle');
+    if (subtitleEl) {
+        if (startYear === 'all') {
+            subtitleEl.textContent = 'Perbandingan imbal hasil kumulatif saham terhadap IHSG (Skala Persentase, Dimulai dari awal tahun 2016)';
+        } else {
+            subtitleEl.textContent = `Perbandingan imbal hasil kumulatif saham terhadap IHSG (Skala Persentase, Dimulai dari awal tahun ${startYear})`;
+        }
+    }
+
     const rawIHSG = pricesData["IHSG"];
     const resampledIHSG = resampleDataset(rawIHSG, relativeTimeframe);
-    const labels = resampledIHSG.map(item => item.date);
     
+    // Filter labels by chosen starting year if applicable
+    let labels = resampledIHSG.map(item => item.date);
+    if (startYear !== 'all') {
+        const yearInt = parseInt(startYear, 10);
+        labels = labels.filter(dateStr => {
+            const d = new Date(dateStr);
+            return d.getFullYear() >= yearInt;
+        });
+    }
+
     const datasets = Object.keys(pricesData).map(ticker => {
         const resampled = resampleDataset(pricesData[ticker], relativeTimeframe);
-        
+
         const rawData = pricesData[ticker];
-        const firstActiveItem = rawData.find(item => item.active !== false);
-        const firstClose = firstActiveItem ? firstActiveItem.close : null;
-        
+        const absoluteFirstActiveItem = rawData.find(item => item.active !== false);
+        const absoluteFirstActiveDate = absoluteFirstActiveItem ? absoluteFirstActiveItem.date : null;
+
+        // Find the first active item for this stock within the filtered timeline
+        let rangeFirstActiveItem = null;
+        for (const dateStr of labels) {
+            const match = resampled.find(item => item.date === dateStr);
+            if (match && match.active !== false) {
+                rangeFirstActiveItem = match;
+                break;
+            }
+        }
+
+        let baseClose = null;
+        let isIPOWithinRange = false;
+        if (rangeFirstActiveItem) {
+            isIPOWithinRange = absoluteFirstActiveDate && (new Date(absoluteFirstActiveDate) >= new Date(labels[0]));
+            if (isIPOWithinRange && absoluteFirstActiveItem) {
+                baseClose = absoluteFirstActiveItem.close;
+            } else {
+                baseClose = rangeFirstActiveItem.close;
+            }
+        }
+
         const pricesList = [];
         const alignedData = labels.map(dateStr => {
             const match = resampled.find(item => item.date === dateStr);
             if (match && match.active !== false) {
                 pricesList.push(match.close);
-                return match.rebased;
+                if (baseClose !== null && baseClose !== 0) {
+                    return ((match.close - baseClose) / baseClose) * 100;
+                }
+                return 0.0;
             } else {
                 pricesList.push(null);
                 return null;
             }
         });
-        
+
         // Ensure that the first active index gets an exact 0.0% rebased start point
+        // ONLY if the stock was already active before the selected range started.
         const firstActiveIdx = alignedData.findIndex(val => val !== null);
-        if (firstActiveIdx !== -1 && firstActiveItem) {
+        if (firstActiveIdx !== -1 && baseClose !== null && !isIPOWithinRange) {
             alignedData[firstActiveIdx] = 0.0;
-            pricesList[firstActiveIdx] = firstActiveItem.close;
         }
-        
+
         return {
             label: ticker === 'IHSG' ? 'IHSG (Benchmark)' : ticker,
             data: alignedData,
             prices: pricesList,
-            firstClose: firstClose,
+            firstClose: baseClose,
             borderColor: ASSET_COLORS[ticker] || '#FFF',
             borderWidth: ticker === 'IHSG' ? 3 : 1.8,
             pointRadius: 0,
@@ -966,24 +1103,22 @@ function updateRelativeChart() {
             zIndex: ticker === 'IHSG' ? 10 : 1
         };
     });
-    
+
     datasets.sort((a, b) => (a.label.includes('IHSG') ? 1 : -1));
-    
+
     relativeChart.data.labels = labels;
-    
+
     const N = labels.length;
     const defaultZoom = getDefaultZoom(N, relativeTimeframe);
-    
     const minIndex = Math.max(0, N - defaultZoom);
     const maxIndex = N - 1;
-    
     relativeChart.options.scales.x.min = minIndex;
     relativeChart.options.scales.x.max = maxIndex;
-    
+
     // Assign datasets to calculate target Y scale ranges
     relativeChart.data.datasets = datasets;
     autoScaleY(relativeChart);
-    
+
     // Set datasets to flat 0% baseline for the initial frame
     const flatDatasets = datasets.map(ds => {
         return {
@@ -992,75 +1127,75 @@ function updateRelativeChart() {
         };
     });
     relativeChart.data.datasets = flatDatasets;
-    
+
     // Turn off animation temporarily to draw the flat state instantly
     relativeChart.options.animation = false;
     relativeChart.update('none');
-    
+
     // Animate lines rising up to target values smoothly
     setTimeout(() => {
         if (!relativeChart) return;
-        
+
         relativeChart.options.animation = {
             duration: 1200,
             easing: 'easeOutCubic'
         };
-        
+
         relativeChart.data.datasets = datasets;
         relativeChart.update();
-        
+
         // Reset animation duration back to 0 after completion to keep drag scaling crisp
         setTimeout(() => {
             if (relativeChart && relativeChart.options) {
                 relativeChart.options.animation = false;
             }
         }, 1250);
-    }, 50);
+    }, 190);
 }
 
 function animateDetailChartsTimeframe(targetMin, targetMax, targetTrendChart, targetVolumeChart) {
     isDetailChartAnimating = true;
-    
+
     // Clear crosshair state immediately to prevent visual glitches or redraw loops during animation
     crosshairState.xVal = null;
     crosshairState.yValTrend = null;
     crosshairState.yValVolume = null;
     crosshairState.activeChartId = null;
-    
+
     const duration = 600; // Snapper 600ms rollout
     const startTime = performance.now();
-    
+
     const windowSize = targetMax - targetMin;
     const startMin = targetMax;
     const startMax = targetMax + windowSize;
-    
+
     // Temporarily disable tooltips, hover effects, and events to optimize performance during animation
     let originalTrendEvents = undefined;
     let originalVolumeEvents = undefined;
-    
+
     // Calculate final Y limits by temporarily setting X scales to the target range
     let targetTrendYMin = null;
     let targetTrendYMax = null;
     if (targetTrendChart) {
         // Clear active hover state & tooltip
         try {
-            if (targetTrendChart.tooltip) targetTrendChart.tooltip.setActiveElements([], {x: 0, y: 0});
+            if (targetTrendChart.tooltip) targetTrendChart.tooltip.setActiveElements([], { x: 0, y: 0 });
             targetTrendChart.setActiveElements([]);
-        } catch (e) {}
-        
+        } catch (e) { }
+
         originalTrendEvents = targetTrendChart.options.events;
         targetTrendChart.options.events = []; // Disable hover/tooltip processing
-        
+
         targetTrendChart.options.scales.x.min = targetMin;
         targetTrendChart.options.scales.x.max = targetMax;
         autoScaleY(targetTrendChart);
         targetTrendYMin = targetTrendChart.options.scales.y.min;
         targetTrendYMax = targetTrendChart.options.scales.y.max;
-        
+
         // Lock Y scale during animation
         targetTrendChart.options.scales.y.min = targetTrendYMin;
         targetTrendChart.options.scales.y.max = targetTrendYMax;
-        
+
         // Disable zoom/pan during animation to prevent user scroll conflicts
         try {
             if (targetTrendChart.options.plugins.zoom && targetTrendChart.options.plugins.zoom.zoom && targetTrendChart.options.plugins.zoom.zoom.wheel) {
@@ -1070,35 +1205,35 @@ function animateDetailChartsTimeframe(targetMin, targetMax, targetTrendChart, ta
         } catch (e) {
             console.warn("Could not temporarily disable zoom for trend chart:", e);
         }
-        
+
         // Set to start window initially
         targetTrendChart.options.scales.x.min = startMin;
         targetTrendChart.options.scales.x.max = startMax;
         targetTrendChart.update('none');
     }
-    
+
     let targetVolumeYMin = null;
     let targetVolumeYMax = null;
     if (targetVolumeChart) {
         // Clear active hover state & tooltip
         try {
-            if (targetVolumeChart.tooltip) targetVolumeChart.tooltip.setActiveElements([], {x: 0, y: 0});
+            if (targetVolumeChart.tooltip) targetVolumeChart.tooltip.setActiveElements([], { x: 0, y: 0 });
             targetVolumeChart.setActiveElements([]);
-        } catch (e) {}
-        
+        } catch (e) { }
+
         originalVolumeEvents = targetVolumeChart.options.events;
         targetVolumeChart.options.events = []; // Disable hover/tooltip processing
-        
+
         targetVolumeChart.options.scales.x.min = targetMin;
         targetVolumeChart.options.scales.x.max = targetMax;
         autoScaleY(targetVolumeChart);
         targetVolumeYMin = targetVolumeChart.options.scales.y.min;
         targetVolumeYMax = targetVolumeChart.options.scales.y.max;
-        
+
         // Lock Y scale during animation
         targetVolumeChart.options.scales.y.min = targetVolumeYMin;
         targetVolumeChart.options.scales.y.max = targetVolumeYMax;
-        
+
         try {
             if (targetVolumeChart.options.plugins.zoom && targetVolumeChart.options.plugins.zoom.zoom && targetVolumeChart.options.plugins.zoom.zoom.wheel) {
                 targetVolumeChart.options.plugins.zoom.zoom.wheel.enabled = false;
@@ -1107,7 +1242,7 @@ function animateDetailChartsTimeframe(targetMin, targetMax, targetTrendChart, ta
         } catch (e) {
             console.warn("Could not temporarily disable zoom for volume chart:", e);
         }
-        
+
         // Set to start window initially
         targetVolumeChart.options.scales.x.min = startMin;
         targetVolumeChart.options.scales.x.max = startMax;
@@ -1123,10 +1258,10 @@ function animateDetailChartsTimeframe(targetMin, targetMax, targetTrendChart, ta
         const progress = Math.min(elapsed / duration, 1);
         // Use easeOutQuart (1 - (1-t)^4) for snappier and smoother initial response
         const easedProgress = 1 - Math.pow(1 - progress, 4);
-        
+
         const currentMin = startMin - easedProgress * (startMin - targetMin);
         const currentMax = startMax - easedProgress * (startMax - targetMax);
-        
+
         if (trendChart) {
             trendChart.options.scales.x.min = currentMin;
             trendChart.options.scales.x.max = currentMax;
@@ -1137,12 +1272,12 @@ function animateDetailChartsTimeframe(targetMin, targetMax, targetTrendChart, ta
             volumeChart.options.scales.x.max = currentMax;
             volumeChart.update('none');
         }
-        
+
         if (progress < 1) {
             requestAnimationFrame(step);
         } else {
             isDetailChartAnimating = false;
-            
+
             // Clear crosshair state one final time to prevent residual drawings
             crosshairState.xVal = null;
             crosshairState.yValTrend = null;
@@ -1183,16 +1318,16 @@ function animateDetailChartsTimeframe(targetMin, targetMax, targetTrendChart, ta
             updateInsightsFromChart();
         }
     }
-    
+
     requestAnimationFrame(step);
 }
 
 // Update Detail View (Chart 2, Chart 3, and Insights)
 function updateSelectedStockView(ticker) {
-    document.querySelectorAll('.selected-stock-ticker').forEach(function(el) {
+    document.querySelectorAll('.selected-stock-ticker').forEach(function (el) {
         el.textContent = ticker;
     });
-    document.querySelectorAll('.selected-stock-ticker-full').forEach(function(el) {
+    document.querySelectorAll('.selected-stock-ticker-full').forEach(function (el) {
         el.textContent = ' - ' + TICKER_NAMES[ticker];
     });
 
@@ -1200,7 +1335,7 @@ function updateSelectedStockView(ticker) {
     if (!stockData) return;
 
     // Filter inactive/pre-IPO rows
-    var activeStockData = stockData.filter(function(item) { return item.active !== false; });
+    var activeStockData = stockData.filter(function (item) { return item.active !== false; });
     currentResampledData = resampleDataset(activeStockData, currentTimeframe);
 
     // Compute initial x window BEFORE building charts so they render correctly on first frame
@@ -1211,29 +1346,16 @@ function updateSelectedStockView(ticker) {
 
     var initialMin = null;
     var initialMax = null;
-    var startMin = null;
-    var startMax = null;
     if (N > 0) {
         initialMin = new Date(currentResampledData[minIndex].date).getTime();
         initialMax = new Date(currentResampledData[maxIndex].date).getTime();
-        var windowSize = initialMax - initialMin;
-        startMin = initialMax;
-        startMax = initialMax + windowSize;
     }
 
-    updateTrendChart(currentResampledData, ticker, startMin, startMax);
-    updateMACDChart(currentResampledData, startMin, startMax);
+    updateTrendChart(currentResampledData, ticker, initialMin, initialMax);
+    updateMACDChart(currentResampledData, initialMin, initialMax);
 
-    // autoScaleY after charts are built
-    if (trendChart)  { autoScaleY(trendChart);  trendChart.update('none'); }
-    if (volumeChart) { autoScaleY(volumeChart); volumeChart.update('none'); }
-
-    if (N >= 2) {
-        animateDetailChartsTimeframe(initialMin, initialMax, trendChart, volumeChart);
-    } else {
-        var visibleData = getVisibleStockData(trendChart, currentResampledData);
-        generateInsights(ticker, visibleData, currentResampledData);
-    }
+    var visibleData = getVisibleStockData(trendChart, currentResampledData);
+    generateInsights(ticker, visibleData, currentResampledData);
 }
 
 // Chart 2: Trend Chart (Candlestick + MA lines)
@@ -1249,29 +1371,61 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
         Chart.defaults.elements.candlestick.borderColor = { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' };
     }
 
-    var candleData = resampled.map(function(item) {
+    var candleData = resampled.map(function (item) {
         return { x: new Date(item.date).getTime(), o: item.open, h: item.high, l: item.low, c: item.close };
     });
 
     // Pre-build sorted timestamps cache for O(log n) snap during mousemove
-    _trendTimestamps = candleData.map(function(d) { return d.x; }).sort(function(a, b) { return a - b; });
-    
-    var ma20Data = resampled.map(function(item) {
+    _trendTimestamps = candleData.map(function (d) { return d.x; }).sort(function (a, b) { return a - b; });
+
+    var ma20Data = resampled.map(function (item) {
         return { x: new Date(item.date).getTime(), y: item.ma20 != null ? item.ma20 : null };
     });
-    var ma50Data = resampled.map(function(item) {
+    var ma50Data = resampled.map(function (item) {
         return { x: new Date(item.date).getTime(), y: item.ma50 != null ? item.ma50 : null };
     });
 
+    // Calculate visible range Y bounds for trendChart
+    let trendYMin = undefined;
+    let trendYMax = undefined;
+    if (resampled.length > 0 && initialMin !== null && initialMax !== null) {
+        let visMin = Infinity;
+        let visMax = -Infinity;
+        const range = findVisibleRange(candleData, initialMin, initialMax, true);
+        const start = range.start;
+        const end = range.end;
+        for (let i = start; i <= end; i++) {
+            const item = resampled[i];
+            if (item) {
+                if (item.low < visMin) visMin = item.low;
+                if (item.high > visMax) visMax = item.high;
+                if (item.ma20 != null && item.ma20 < visMin) visMin = item.ma20;
+                if (item.ma20 != null && item.ma20 > visMax) visMax = item.ma20;
+                if (item.ma50 != null && item.ma50 < visMin) visMin = item.ma50;
+                if (item.ma50 != null && item.ma50 > visMax) visMax = item.ma50;
+            }
+        }
+        if (visMin !== Infinity && visMax !== -Infinity) {
+            const rangeVal = visMax - visMin;
+            const padding = rangeVal * 0.05 || 1.0;
+            trendYMin = visMin - padding;
+            trendYMax = visMax + padding;
+        }
+    }
+
     trendChart = new Chart(ctx, {
         type: 'candlestick',
-        data: { datasets: [
-            { type: 'candlestick', label: ticker, data: candleData,
-              color: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' },
-              borderColor: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' } },
-            { type: 'line', label: 'MA20', data: ma20Data, borderColor: '#F59E0B', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [4, 3], tension: 0.1, spanGaps: true },
-            { type: 'line', label: 'MA50', data: ma50Data, borderColor: '#3B82F6', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [6, 4], tension: 0.1, spanGaps: true }
-        ]},
+        data: {
+            datasets: [
+                {
+                    type: 'candlestick', label: ticker, data: candleData,
+                    color: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' },
+                    borderColor: { up: '#12C286', down: '#FF5555', unchanged: '#9CA3AF' }
+                },
+                { type: 'line', label: 'MA20', data: ma20Data, borderColor: '#F59E0B', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [4, 3], tension: 0.1, spanGaps: true },
+                { type: 'line', label: 'MA50', data: ma50Data, borderColor: '#3B82F6', borderWidth: 1.5, pointRadius: 0, fill: false, borderDash: [6, 4], tension: 0.1, spanGaps: true }
+            ]
+        },
         plugins: [trendChartRulerPlugin, crosshairPlugin],
         options: {
             elements: {
@@ -1286,21 +1440,29 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
             interaction: { mode: 'index', intersect: false, axis: 'x' },
             plugins: {
                 zoom: {
-                    pan: { enabled: true, mode: 'x', onPan: function(ref) {
-                        var c = ref.chart; syncXAxis(c, volumeChart); autoScaleY(c);
-                        if (volumeChart) { autoScaleY(volumeChart); volumeChart.update('none'); }
-                        c.update('none'); debouncedUpdateInsights();
-                    }},
-                    zoom: { wheel: { enabled: true, speed: 0.1 }, pinch: { enabled: true }, mode: 'x', onZoom: function(ref) {
-                        var c = ref.chart; syncXAxis(c, volumeChart); autoScaleY(c);
-                        if (volumeChart) { autoScaleY(volumeChart); volumeChart.update('none'); }
-                        c.update('none'); debouncedUpdateInsights();
-                    }}
+                    pan: {
+                        enabled: true, mode: 'x', onPan: function (ref) {
+                            var c = ref.chart; syncXAxis(c, volumeChart); autoScaleY(c);
+                            if (volumeChart) { autoScaleY(volumeChart); volumeChart.update('none'); }
+                            c.update('none'); debouncedUpdateInsights();
+                        }
+                    },
+                    zoom: {
+                        wheel: { enabled: true, speed: 0.1 }, pinch: { enabled: true }, mode: 'x', onZoom: function (ref) {
+                            var c = ref.chart; syncXAxis(c, volumeChart); autoScaleY(c);
+                            if (volumeChart) { autoScaleY(volumeChart); volumeChart.update('none'); }
+                            c.update('none'); debouncedUpdateInsights();
+                        }
+                    }
                 },
-                legend: { display: true, labels: { color: '#9CA3AF', font: { family: 'Inter', size: 10 },
-                    filter: function(item) { return item.text === 'MA20' || item.text === 'MA50'; } } },
+                legend: {
+                    display: true, labels: {
+                        color: '#9CA3AF', font: { family: 'Inter', size: 10 },
+                        filter: function (item) { return item.text === 'MA20' || item.text === 'MA50'; }
+                    }
+                },
                 tooltip: {
-                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    backgroundColor: '#0B0F14',
                     borderColor: 'rgba(255, 255, 255, 0.15)',
                     borderWidth: 1,
                     borderRadius: 6,
@@ -1311,18 +1473,20 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
                     bodyFont: { family: 'Inter', size: 11 },
                     titleSpacing: 6,
                     bodySpacing: 4,
-                    callbacks: { label: function(context) {
-                        var ds = context.dataset;
-                        if (ds.type === 'candlestick') {
-                            var d = context.raw;
-                            return ['Open : Rp '+d.o.toLocaleString('id-ID'), 'High : Rp '+d.h.toLocaleString('id-ID'),
-                                    'Low  : Rp '+d.l.toLocaleString('id-ID'), 'Close: Rp '+d.c.toLocaleString('id-ID')];
+                    callbacks: {
+                        label: function (context) {
+                            var ds = context.dataset;
+                            if (ds.type === 'candlestick') {
+                                var d = context.raw;
+                                return ['Open : Rp ' + d.o.toLocaleString('id-ID'), 'High : Rp ' + d.h.toLocaleString('id-ID'),
+                                'Low  : Rp ' + d.l.toLocaleString('id-ID'), 'Close: Rp ' + d.c.toLocaleString('id-ID')];
+                            }
+                            var lbl = ds.label || ''; if (lbl) lbl += ': ';
+                            lbl += 'Rp ';
+                            if (context.parsed.y !== null) lbl += context.parsed.y.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+                            return lbl;
                         }
-                        var lbl = ds.label || ''; if (lbl) lbl += ': ';
-                        lbl += 'Rp ';
-                        if (context.parsed.y !== null) lbl += context.parsed.y.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-                        return lbl;
-                    }}
+                    }
                 }
             },
             scales: {
@@ -1347,17 +1511,21 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
                     ticks: { color: '#9CA3AF', font: { family: 'Inter', size: 11, weight: '500' }, maxTicksLimit: 8, align: 'center', padding: 10 }
                 },
                 y: {
+                    min: trendYMin !== undefined ? trendYMin : undefined,
+                    max: trendYMax !== undefined ? trendYMax : undefined,
                     grid: { color: 'rgba(255,255,255,0.05)', drawTicks: false },
-                    ticks: { color: '#9CA3AF', font: { family: 'Inter', size: 11, weight: '500' }, padding: 10,
-                        callback: function(value) { return 'Rp ' + value.toLocaleString('id-ID'); } },
-                    afterFit: function(scaleInstance) { scaleInstance.width = 95; }
+                    ticks: {
+                        color: '#9CA3AF', font: { family: 'Inter', size: 11, weight: '500' }, padding: 10,
+                        callback: function (value) { return 'Rp ' + value.toLocaleString('id-ID'); }
+                    },
+                    afterFit: function (scaleInstance) { scaleInstance.width = 95; }
                 },
                 yRight: {
                     type: 'linear',
                     position: 'right',
                     grid: { drawOnChartArea: false },
                     ticks: { display: false },
-                    afterFit: function(scaleInstance) { scaleInstance.width = 75; }
+                    afterFit: function (scaleInstance) { scaleInstance.width = 75; }
                 }
             }
         }
@@ -1377,29 +1545,63 @@ function updateTrendChart(resampled, ticker, initialMin, initialMax) {
 function updateMACDChart(resampled, initialMin, initialMax) {
     var ctx = document.getElementById('volumeChart').getContext('2d');
     if (volumeChart) { volumeChart.destroy(); volumeChart = null; }
-    
+
     // Calculate MACD values
     const macdData = calculateMACD(resampled);
-    
+
     const dates = resampled.map(item => new Date(item.date).getTime());
-    
+
     const histogramData = resampled.map((item, idx) => ({
         x: dates[idx],
         y: macdData.histogram[idx]
     }));
-    
+
     const macdLineData = resampled.map((item, idx) => ({
         x: dates[idx],
         y: macdData.macdLine[idx]
     }));
-    
+
     const signalLineData = resampled.map((item, idx) => ({
         x: dates[idx],
         y: macdData.signalLine[idx]
     }));
-    
+
     const barColors = macdData.histogram.map(val => val >= 0 ? '#12C286' : '#FF5555');
-    
+
+    // Calculate visible range Y bounds for volumeChart (MACD)
+    let macdYMin = undefined;
+    let macdYMax = undefined;
+    if (resampled.length > 0 && initialMin !== null && initialMax !== null) {
+        let visMin = Infinity;
+        let visMax = -Infinity;
+        const range = findVisibleRange(histogramData, initialMin, initialMax, true);
+        const start = range.start;
+        const end = range.end;
+        for (let i = start; i <= end; i++) {
+            const hVal = macdData.histogram[i];
+            const mVal = macdData.macdLine[i];
+            const sVal = macdData.signalLine[i];
+            if (hVal != null) {
+                if (hVal < visMin) visMin = hVal;
+                if (hVal > visMax) visMax = hVal;
+            }
+            if (mVal != null) {
+                if (mVal < visMin) visMin = mVal;
+                if (mVal > visMax) visMax = mVal;
+            }
+            if (sVal != null) {
+                if (sVal < visMin) visMin = sVal;
+                if (sVal > visMax) visMax = sVal;
+            }
+        }
+        if (visMin !== Infinity && visMax !== -Infinity) {
+            const maxAbs = Math.max(Math.abs(visMin), Math.abs(visMax));
+            const finalMax = maxAbs || 1.0;
+            macdYMin = -finalMax * 1.15;
+            macdYMax = finalMax * 1.15;
+        }
+    }
+
     const datasets = [
         {
             type: 'line',
@@ -1437,7 +1639,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
             order: 3
         }
     ];
-    
+
     volumeChart = new Chart(ctx, {
         data: { datasets: datasets },
         plugins: [crosshairPlugin],
@@ -1454,7 +1656,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
                     pan: {
                         enabled: true,
                         mode: 'x',
-                        onPan: ({chart}) => {
+                        onPan: ({ chart }) => {
                             syncXAxis(chart, trendChart);
                             autoScaleY(chart);
                             if (trendChart) {
@@ -1469,7 +1671,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
                         wheel: { enabled: true, speed: 0.1 },
                         pinch: { enabled: true },
                         mode: 'x',
-                        onZoom: ({chart}) => {
+                        onZoom: ({ chart }) => {
                             syncXAxis(chart, trendChart);
                             autoScaleY(chart);
                             if (trendChart) {
@@ -1489,7 +1691,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    backgroundColor: '#0B0F14',
                     borderColor: 'rgba(255, 255, 255, 0.15)',
                     borderWidth: 1,
                     borderRadius: 6,
@@ -1501,7 +1703,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
                     titleSpacing: 6,
                     bodySpacing: 4,
                     callbacks: {
-                        label: function(context) {
+                        label: function (context) {
                             let label = context.dataset.label || '';
                             if (label) label += ': ';
                             if (context.parsed.y !== null) {
@@ -1517,6 +1719,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
             scales: {
                 x: {
                     type: 'timeseries',
+                    offset: true,
                     min: initialMin != null ? initialMin : undefined,
                     max: initialMax != null ? initialMax : undefined,
                     time: {
@@ -1541,18 +1744,20 @@ function updateMACDChart(resampled, initialMin, initialMax) {
                     }
                 },
                 y: {
+                    min: macdYMin !== undefined ? macdYMin : undefined,
+                    max: macdYMax !== undefined ? macdYMax : undefined,
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawTicks: false },
                     ticks: {
                         color: '#9CA3AF',
                         font: { family: 'Inter', size: 11, weight: '500' },
                         padding: 10,
-                        callback: function(value) {
+                        callback: function (value) {
                             if (value > 0) return '+' + value.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
                             if (value < 0) return value.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
                             return '0';
                         }
                     },
-                    afterFit: function(scaleInstance) {
+                    afterFit: function (scaleInstance) {
                         scaleInstance.width = 95;
                     }
                 },
@@ -1561,7 +1766,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
                     position: 'right',
                     grid: { drawOnChartArea: false },
                     ticks: { display: false },
-                    afterFit: function(scaleInstance) {
+                    afterFit: function (scaleInstance) {
                         scaleInstance.width = 75;
                     }
                 }
@@ -1575,18 +1780,18 @@ function updateMACDChart(resampled, initialMin, initialMax) {
 // Generate Insights Automatically
 function generateInsights(ticker, stockData, fullResampled) {
     if (stockData.length === 0) return;
-    
+
     const latest = stockData[stockData.length - 1];
     const prev = stockData[stockData.length - 2] || latest;
     const first = stockData[0];
-    
+
     const close = latest.close;
     const ma20 = latest.ma20;
     const ma50 = latest.ma50;
-    
+
     // Calculate returns
     const stockReturn = ((close - first.close) / first.close * 100).toFixed(1);
-    
+
     // Calculate IHSG return in same period
     const rawIHSG = pricesData["IHSG"];
     const resampledIHSG = resampleDataset(rawIHSG, currentTimeframe);
@@ -1594,7 +1799,7 @@ function generateInsights(ticker, stockData, fullResampled) {
     const matchingFirstIHSG = resampledIHSG.find(item => item.date === first.date) || resampledIHSG[0];
     const matchingLatestIHSG = resampledIHSG.find(item => item.date === latest.date) || resampledIHSG[resampledIHSG.length - 1];
     const ihsgReturn = ((matchingLatestIHSG.close - matchingFirstIHSG.close) / matchingFirstIHSG.close * 100).toFixed(1);
-    
+
     // Update Timeframe Note beside the badges
     const noteEl = document.getElementById('insights-timeframe-note');
     if (noteEl) {
@@ -1610,7 +1815,7 @@ function generateInsights(ticker, stockData, fullResampled) {
     let trendBadge = "Neutral";
     let trendBadgeClass = "badge-neutral";
     let trendInsightText = "";
-    
+
     if (close > ma50) {
         trendBadge = "Bullish";
         trendBadgeClass = "badge-bullish";
@@ -1620,7 +1825,7 @@ function generateInsights(ticker, stockData, fullResampled) {
         trendBadgeClass = "badge-bearish";
         trendInsightText = `<span class="text-danger">bearish</span>. Harga penutupan terbaru (Rp ${close.toLocaleString('id-ID')}) berada di bawah MA50 (Rp ${ma50.toLocaleString('id-ID')}), yang mengindikasikan tekanan jual jangka menengah.`;
     }
-    
+
     // Add short-term MA20 reference
     let shortTermTrend = "";
     if (close > ma20) {
@@ -1628,31 +1833,31 @@ function generateInsights(ticker, stockData, fullResampled) {
     } else {
         shortTermTrend = `Di jangka pendek, harga tertekan di bawah MA20 (Rp ${ma20.toLocaleString('id-ID')}), menunjukkan adanya pelemahan tren jangka pendek.`;
     }
-    
+
     // Update Trend Badge
     const trBadgeEl = document.getElementById('stock-trend-badge');
     if (trBadgeEl) {
         trBadgeEl.textContent = trendBadge;
         trBadgeEl.className = `badge ${trendBadgeClass}`;
     }
-    
+
     // 2. Determine MACD Momentum Badge & Text
     const macdData = calculateMACD(fullResampled || stockData);
     const latestDate = latest.date;
     const fullDataset = fullResampled || stockData;
     const latestIdx = fullDataset.findIndex(item => item.date === latestDate);
-    
+
     const latestMacd = latestIdx !== -1 ? macdData.macdLine[latestIdx] : macdData.macdLine[macdData.macdLine.length - 1];
     const latestSignal = latestIdx !== -1 ? macdData.signalLine[latestIdx] : macdData.signalLine[macdData.signalLine.length - 1];
     const latestHist = latestIdx !== -1 ? macdData.histogram[latestIdx] : macdData.histogram[macdData.histogram.length - 1];
-    
+
     const prevIdx = latestIdx > 0 ? latestIdx - 1 : latestIdx;
     const prevHist = latestIdx !== -1 ? macdData.histogram[prevIdx] : (macdData.histogram[macdData.histogram.length - 2] || latestHist);
-    
+
     let momentumBadge = "Momentum Neutral";
     let momentumBadgeClass = "badge-neutral";
     let momentumInsightText = "";
-    
+
     if (latestMacd > latestSignal) {
         momentumBadge = "Momentum Bullish";
         momentumBadgeClass = "badge-bullish";
@@ -1662,7 +1867,7 @@ function generateInsights(ticker, stockData, fullResampled) {
         momentumBadgeClass = "badge-bearish";
         momentumInsightText = `Indikator MACD menunjukkan momentum <span class="text-danger">bearish</span>. MACD Line (Rp ${latestMacd.toLocaleString('id-ID', { maximumFractionDigits: 2 })}) berada di bawah Signal Line (Rp ${latestSignal.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), yang mengindikasikan tekanan turun. `;
     }
-    
+
     // Add Histogram description
     if (latestHist > 0) {
         if (latestHist > prevHist) {
@@ -1677,28 +1882,28 @@ function generateInsights(ticker, stockData, fullResampled) {
             momentumInsightText += `Histogram MACD bernilai negatif namun mulai mengecil/membaik (Rp ${latestHist.toLocaleString('id-ID', { maximumFractionDigits: 2 })}), mengindikasikan pelemahan momentum jual (potensi pembalikan arah naik).`;
         }
     }
-    
+
     const momBadgeEl = document.getElementById('stock-volume-badge');
     if (momBadgeEl) {
         momBadgeEl.textContent = momentumBadge;
         momBadgeEl.className = `badge ${momentumBadgeClass}`;
     }
-    
+
     // 3. Performance vs IHSG Text
     let relativePerformanceText = "";
     const isOutperformer = parseFloat(stockReturn) > parseFloat(ihsgReturn);
-    
+
     if (isOutperformer) {
         relativePerformanceText = `Saham <strong>${ticker}</strong> berhasil <span class="text-success">mengungguli</span> indeks IHSG (Outperformer) selama rentang waktu visualisasi ini, dengan total imbal hasil sebesar <strong>${stockReturn}%</strong> dibandingkan IHSG yang sebesar <strong>${ihsgReturn}%</strong>.`;
     } else {
         relativePerformanceText = `Saham <strong>${ticker}</strong> bergerak <span class="text-danger">tertinggal</span> dibandingkan indeks IHSG (Underperformer) selama rentang waktu visualisasi ini, dengan imbal hasil total sebesar <strong>${stockReturn}%</strong> dibandingkan IHSG yang sebesar <strong>${ihsgReturn}%</strong>.`;
     }
-    
+
     // 4. Determine Confirmation Text
     let confirmationText = "";
     const isPriceBullish = close > ma50;
     const isMacdBullish = latestMacd > latestSignal;
-    
+
     if (isPriceBullish && isMacdBullish) {
         confirmationText = `Pergerakan harga yang berada di atas MA50 terkonfirmasi oleh MACD Crossover Bullish. Ini menunjukkan tren kenaikan harga jangka menengah didukung oleh momentum beli yang solid, memberikan indikasi kelanjutan tren naik.`;
     } else if (isPriceBullish && !isMacdBullish) {
@@ -1708,7 +1913,7 @@ function generateInsights(ticker, stockData, fullResampled) {
     } else {
         confirmationText = `Meskipun harga saham berada di bawah MA50 (tren turun), indikator MACD menunjukkan crossover bullish. Hal ini mengindikasikan adanya pelemahan tekanan jual atau potensi pembalikan arah tren (rebound) jangka pendek.`;
     }
-    
+
     // Assemble final bullet points
     let htmlContent = `
         <p>Berdasarkan analisis data penutupan historis dan momentum MACD untuk saham <strong>${TICKER_NAMES[ticker]} (${ticker})</strong> dalam rentang waktu yang ditampilkan, berikut rangkuman analisis tren dan momentumnya:</p>
@@ -1722,7 +1927,7 @@ function generateInsights(ticker, stockData, fullResampled) {
             *Catatan: Analisis ini diperbarui secara otomatis berdasarkan data transaksi penutupan terakhir dan tidak ditujukan sebagai rekomendasi finansial mutlak.
         </p>
     `;
-    
+
     document.getElementById('analysis-insights-box').innerHTML = htmlContent;
 }
 
@@ -1747,7 +1952,7 @@ function initCustomCursor() {
             cursor.style.opacity = 1;
             cursorVisible = true;
         }
-        
+
         // Dynamically toggle ruler crosshair class on custom cursor
         if (rulerState && rulerState.active && e.target && (e.target.id === 'trendChart' || e.target.closest('#trendChart'))) {
             cursor.classList.add('ruler-mode');
@@ -1782,7 +1987,7 @@ function initCustomCursor() {
     document.addEventListener('mouseleave', () => {
         cursor.style.opacity = 0;
     });
-    
+
     document.addEventListener('mouseenter', () => {
         if (cursorVisible) {
             cursor.style.opacity = 1;
@@ -1798,10 +2003,10 @@ function initCustomCursor() {
 
         // Offset translation to center the 16px wide circle on cursor hotspot
         cursor.style.transform = `translate3d(${cursorX - 8}px, ${cursorY - 8}px, 0) scale(${currentScale})`;
-        
+
         requestAnimationFrame(animateCursor);
     }
-    
+
     // Start animation loop
     requestAnimationFrame(animateCursor);
 
@@ -1809,8 +2014,8 @@ function initCustomCursor() {
     document.addEventListener('mouseover', (e) => {
         const target = e.target;
         if (!target) return;
-        
-        const isInteractive = 
+
+        const isInteractive =
             target.tagName === 'A' ||
             target.tagName === 'BUTTON' ||
             target.tagName === 'SELECT' ||
@@ -1830,8 +2035,8 @@ function initCustomCursor() {
     document.addEventListener('mouseout', (e) => {
         const target = e.target;
         if (!target) return;
-        
-        const isInteractive = 
+
+        const isInteractive =
             target.tagName === 'A' ||
             target.tagName === 'BUTTON' ||
             target.tagName === 'SELECT' ||
@@ -1860,28 +2065,28 @@ const trendChartRulerPlugin = {
     id: 'rulerPlugin',
     afterDatasetsDraw(chart, args, options) {
         if (!rulerState.active || !rulerState.startPoint) return;
-        
+
         const ctx = chart.ctx;
         const start = rulerState.startPoint;
         const end = rulerState.endPoint || rulerState.currentMousePoint;
         if (!end) return;
-        
+
         // Convert data coordinates to pixel coordinates
         const x1 = chart.scales.x.getPixelForValue(start.xVal);
         const y1 = chart.scales.y.getPixelForValue(start.yVal);
         const x2 = chart.scales.x.getPixelForValue(end.xVal);
         const y2 = chart.scales.y.getPixelForValue(end.yVal);
-        
+
         // Draw shaded area
         ctx.save();
         ctx.fillStyle = 'rgba(0, 102, 255, 0.12)';
         ctx.strokeStyle = '#0066FF';
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
-        
+
         // Draw bounding box
         ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
-        
+
         // Draw dotted borders
         ctx.beginPath();
         // vertical line at start
@@ -1897,12 +2102,12 @@ const trendChartRulerPlugin = {
         ctx.moveTo(chart.chartArea.left, y2);
         ctx.lineTo(chart.chartArea.right, y2);
         ctx.stroke();
-        
+
         // Draw arrows inside the box
         ctx.setLineDash([]);
         ctx.strokeStyle = 'rgba(0, 102, 255, 0.5)';
         ctx.lineWidth = 1.5;
-        
+
         // Draw main lines for arrows
         ctx.beginPath();
         // vertical center arrow
@@ -1914,33 +2119,33 @@ const trendChartRulerPlugin = {
         ctx.moveTo(x1, centerY);
         ctx.lineTo(x2, centerY);
         ctx.stroke();
-        
+
         // Draw arrowheads
         drawArrowhead(ctx, centerX, y2, y2 > y1 ? 'down' : 'up');
         drawArrowhead(ctx, x2, centerY, x2 > x1 ? 'right' : 'left');
-        
+
         // Draw label box at the center of the box
         const startIdx = getClosestDataPointIndex(chart, start.xVal);
         const endIdx = getClosestDataPointIndex(chart, end.xVal);
         const startItem = chart.data.datasets[0].data[startIdx];
         const endItem = chart.data.datasets[0].data[endIdx];
-        
+
         if (startItem && endItem) {
             // Price info
             const startPrice = start.yVal;
             const endPrice = end.yVal;
             const priceDiff = endPrice - startPrice;
             const pricePct = (priceDiff / startPrice) * 100;
-            
+
             const sign = priceDiff >= 0 ? '+' : '';
             const priceDiffText = `${sign}${priceDiff.toLocaleString('id-ID', { maximumFractionDigits: 2 })}`;
             const pricePctText = `${sign}${pricePct.toFixed(2)}%`;
-            
+
             // Bars & Days info
             const bars = Math.abs(endIdx - startIdx) + 1;
             const msDiff = Math.abs(new Date(endItem.x) - new Date(startItem.x));
             const days = Math.round(msDiff / (1000 * 60 * 60 * 24));
-            
+
             // Volume sum info
             const minIdx = Math.min(startIdx, endIdx);
             const maxIdx = Math.max(startIdx, endIdx);
@@ -1951,31 +2156,31 @@ const trendChartRulerPlugin = {
                     volSum += item.volume;
                 }
             }
-            
+
             let volText = '';
             if (volSum >= 1e9) volText = (volSum / 1e9).toFixed(2) + ' B';
             else if (volSum >= 1e6) volText = (volSum / 1e6).toFixed(2) + ' M';
             else if (volSum >= 1e3) volText = (volSum / 1e3).toFixed(2) + ' K';
             else volText = volSum.toLocaleString('id-ID');
-            
+
             const textLines = [
                 `${priceDiffText} (${pricePctText})`,
                 `${bars} bars, ${days}d`,
                 `Vol: ${volText}`
             ];
-            
+
             // Draw tooltip box
             const boxWidth = 140;
             const boxHeight = 62;
             const boxX = centerX - boxWidth / 2;
             const boxY = Math.min(y1, y2) - boxHeight - 10; // place above the box
-            
+
             // Keep box inside chartArea
             let finalBoxY = boxY;
             if (finalBoxY < chart.chartArea.top) {
                 finalBoxY = Math.max(y1, y2) + 10; // place below the box if it goes above the top
             }
-            
+
             // Draw box background
             ctx.fillStyle = 'rgba(0, 102, 255, 0.55)';
             ctx.strokeStyle = 'rgba(51, 133, 255, 0.8)';
@@ -1988,19 +2193,19 @@ const trendChartRulerPlugin = {
             }
             ctx.fill();
             ctx.stroke();
-            
+
             // Draw text
             ctx.fillStyle = '#FFFFFF';
             ctx.font = 'bold 11px Inter';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            
+
             ctx.fillText(textLines[0], centerX, finalBoxY + 15);
             ctx.font = '500 10px Inter';
             ctx.fillText(textLines[1], centerX, finalBoxY + 32);
             ctx.fillText(textLines[2], centerX, finalBoxY + 48);
         }
-        
+
         ctx.restore();
     }
 };
@@ -2032,10 +2237,10 @@ function drawArrowhead(ctx, x, y, direction) {
 function getClosestDataPointIndex(chart, xVal) {
     const data = chart.data.datasets[0].data;
     if (!data || data.length === 0) return -1;
-    
+
     let closestIndex = 0;
     let minDiff = Infinity;
-    
+
     for (let i = 0; i < data.length; i++) {
         const diff = Math.abs(data[i].x - xVal);
         if (diff < minDiff) {
@@ -2049,15 +2254,15 @@ function getClosestDataPointIndex(chart, xVal) {
 function setupRulerToggle() {
     const rulerBtn = document.getElementById('ruler-tool-btn');
     if (!rulerBtn) return;
-    
+
     rulerBtn.addEventListener('click', () => {
         rulerState.active = !rulerState.active;
         const canvas = document.getElementById('trendChart');
-        
+
         if (rulerState.active) {
             rulerBtn.classList.add('active');
             if (canvas) canvas.classList.add('ruler-cursor');
-            
+
             // Disable chart zoom & pan
             if (trendChart && trendChart.options.plugins.zoom) {
                 trendChart.options.plugins.zoom.zoom.wheel.enabled = false;
@@ -2075,7 +2280,7 @@ function setupRulerToggle() {
             rulerBtn.classList.remove('active');
             if (canvas) canvas.classList.remove('ruler-cursor');
             clearRuler();
-            
+
             // Enable chart zoom & pan
             if (trendChart && trendChart.options.plugins.zoom) {
                 trendChart.options.plugins.zoom.zoom.wheel.enabled = true;
@@ -2096,37 +2301,37 @@ function setupRulerToggle() {
 function setupRulerEvents() {
     const canvas = document.getElementById('trendChart');
     if (!canvas) return;
-    
+
     canvas.addEventListener('mousedown', (e) => {
         if (!rulerState.active) return;
-        
+
         e.preventDefault();
-        
+
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        
+
         const xVal = trendChart.scales.x.getValueForPixel(x);
         const yVal = trendChart.scales.y.getValueForPixel(y);
-        
+
         rulerState.startPoint = { xVal, yVal };
         rulerState.endPoint = null;
         rulerState.currentMousePoint = { xVal, yVal };
         rulerState.isMeasuring = true;
-        
+
         trendChart.update('none');
     });
-    
+
     canvas.addEventListener('mousemove', (e) => {
         if (!rulerState.active) return;
-        
+
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        
+
         const xVal = trendChart.scales.x.getValueForPixel(x);
         const yVal = trendChart.scales.y.getValueForPixel(y);
-        
+
         if (rulerState.isMeasuring) {
             rulerState.currentMousePoint = { xVal, yVal };
             trendChart.update('none');
@@ -2135,23 +2340,23 @@ function setupRulerEvents() {
             trendChart.update('none');
         }
     });
-    
+
     canvas.addEventListener('mouseup', (e) => {
         if (!rulerState.active || !rulerState.isMeasuring) return;
-        
+
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        
+
         const xVal = trendChart.scales.x.getValueForPixel(x);
         const yVal = trendChart.scales.y.getValueForPixel(y);
-        
+
         rulerState.endPoint = { xVal, yVal };
         rulerState.isMeasuring = false;
-        
+
         trendChart.update('none');
     });
-    
+
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && rulerState.active) {
             clearRuler();
@@ -2173,11 +2378,11 @@ function clearRuler() {
 function calculateEMA(values, period) {
     const ema = [];
     if (values.length === 0) return ema;
-    
+
     const k = 2 / (period + 1);
     let currentEma = values[0];
     ema.push(currentEma);
-    
+
     for (let i = 1; i < values.length; i++) {
         currentEma = (values[i] * k) + (currentEma * (1 - k));
         ema.push(currentEma);
@@ -2189,19 +2394,19 @@ function calculateMACD(resampled) {
     const closes = resampled.map(item => item.close);
     const ema12 = calculateEMA(closes, 12);
     const ema26 = calculateEMA(closes, 26);
-    
+
     const macdLine = [];
     for (let i = 0; i < closes.length; i++) {
         macdLine.push(ema12[i] - ema26[i]);
     }
-    
+
     const signalLine = calculateEMA(macdLine, 9);
-    
+
     const histogram = [];
     for (let i = 0; i < closes.length; i++) {
         histogram.push(macdLine[i] - signalLine[i]);
     }
-    
+
     return {
         macdLine,
         signalLine,
@@ -2213,7 +2418,7 @@ function calculateMACD(resampled) {
 function formatDateForCrosshair(timestamp, timeframe) {
     const d = new Date(timestamp);
     if (isNaN(d.getTime())) return "";
-    
+
     if (timeframe === 'monthly') {
         return d.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' });
     } else if (timeframe === 'yearly') {
@@ -2228,15 +2433,15 @@ const crosshairPlugin = {
     id: 'crosshairPlugin',
     afterDatasetsDraw(chart, args, options) {
         if (crosshairState.xVal === null) return;
-        
+
         const ctx = chart.ctx;
         const xScale = chart.scales.x;
         const yScale = chart.scales.y;
-        
+
         const xPixel = xScale.getPixelForValue(crosshairState.xVal);
-        
+
         ctx.save();
-        
+
         // 1. Draw synchronized vertical dotted line if inside chartArea
         if (xPixel >= chart.chartArea.left && xPixel <= chart.chartArea.right) {
             ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)';
@@ -2246,7 +2451,7 @@ const crosshairPlugin = {
             ctx.moveTo(xPixel, chart.chartArea.top);
             ctx.lineTo(xPixel, chart.chartArea.bottom);
             ctx.stroke();
-            
+
             // Only draw X-axis label box if this is the active chart
             if (crosshairState.activeChartId === chart.canvas.id) {
                 const text = formatDateForCrosshair(crosshairState.xVal, currentTimeframe);
@@ -2256,7 +2461,7 @@ const crosshairPlugin = {
                 const boxHeight = 18;
                 const boxX = xPixel - boxWidth / 2;
                 const boxY = chart.chartArea.bottom + 2;
-                
+
                 // Keep box inside chart boundaries
                 let finalBoxX = boxX;
                 if (finalBoxX < chart.chartArea.left) {
@@ -2264,7 +2469,7 @@ const crosshairPlugin = {
                 } else if (finalBoxX + boxWidth > chart.chartArea.right) {
                     finalBoxX = chart.chartArea.right - boxWidth;
                 }
-                
+
                 ctx.fillStyle = '#2A3441';
                 ctx.beginPath();
                 if (ctx.roundRect) {
@@ -2273,20 +2478,20 @@ const crosshairPlugin = {
                     ctx.rect(finalBoxX, boxY, boxWidth, boxHeight);
                 }
                 ctx.fill();
-                
+
                 ctx.fillStyle = '#FFFFFF';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(text, finalBoxX + boxWidth / 2, boxY + boxHeight / 2);
             }
         }
-        
+
         // 2. Draw horizontal dotted line and Y-axis label box if this is the active chart
         if (crosshairState.activeChartId === chart.canvas.id) {
             const yVal = chart.canvas.id === 'trendChart' ? crosshairState.yValTrend : crosshairState.yValVolume;
             if (yVal !== null && yVal !== undefined) {
                 const yPixel = yScale.getPixelForValue(yVal);
-                
+
                 if (yPixel >= chart.chartArea.top && yPixel <= chart.chartArea.bottom) {
                     ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)';
                     ctx.lineWidth = 1;
@@ -2295,7 +2500,7 @@ const crosshairPlugin = {
                     ctx.moveTo(chart.chartArea.left, yPixel);
                     ctx.lineTo(chart.chartArea.right, yPixel);
                     ctx.stroke();
-                    
+
                     // Format Y value text
                     let formattedY = "";
                     if (chart.canvas.id === 'trendChart') {
@@ -2304,14 +2509,14 @@ const crosshairPlugin = {
                         const sign = yVal >= 0 ? '+' : '';
                         formattedY = sign + yVal.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                     }
-                    
+
                     ctx.font = '10px Inter';
                     const textWidth = ctx.measureText(formattedY).width;
                     const boxWidth = textWidth + 12;
                     const boxHeight = 18;
                     const boxX = chart.chartArea.left - boxWidth;
                     const boxY = yPixel - boxHeight / 2;
-                    
+
                     // Constrain box vertically within chartArea
                     let finalBoxY = boxY;
                     if (finalBoxY < chart.chartArea.top) {
@@ -2319,7 +2524,7 @@ const crosshairPlugin = {
                     } else if (finalBoxY + boxHeight > chart.chartArea.bottom) {
                         finalBoxY = chart.chartArea.bottom - boxHeight;
                     }
-                    
+
                     ctx.fillStyle = '#2A3441';
                     ctx.beginPath();
                     if (ctx.roundRect) {
@@ -2328,7 +2533,7 @@ const crosshairPlugin = {
                         ctx.rect(boxX, finalBoxY, boxWidth, boxHeight);
                     }
                     ctx.fill();
-                    
+
                     ctx.fillStyle = '#FFFFFF';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
@@ -2336,7 +2541,7 @@ const crosshairPlugin = {
                 }
             }
         }
-        
+
         ctx.restore();
     }
 };
@@ -2345,9 +2550,9 @@ const crosshairPlugin = {
 function setupCrosshairEvents() {
     const trendCanvas = document.getElementById('trendChart');
     const volumeCanvas = document.getElementById('volumeChart');
-    
+
     if (!trendCanvas || !volumeCanvas) return;
-    
+
     // Binary search: find index of nearest timestamp in sorted array
     function bsSnapTimestamp(ts) {
         var arr = _trendTimestamps;
@@ -2379,77 +2584,77 @@ function setupCrosshairEvents() {
 
         // Ensure mouse is inside chart Area
         if (x < chart.chartArea.left || x > chart.chartArea.right ||
-            y < chart.chartArea.top  || y > chart.chartArea.bottom) {
+            y < chart.chartArea.top || y > chart.chartArea.bottom) {
             handleMouseLeave();
             return;
         }
 
         // Get raw values then snap X to nearest candle (binary search, O(log n))
         const rawXVal = chart.scales.x.getValueForPixel(x);
-        const yVal    = chart.scales.y.getValueForPixel(y);
+        const yVal = chart.scales.y.getValueForPixel(y);
         const snappedXVal = bsSnapTimestamp(rawXVal);
 
         // Only schedule a redraw if something actually changed
         const changed = (crosshairState.xVal !== snappedXVal ||
-                         crosshairState.activeChartId !== chartId);
+            crosshairState.activeChartId !== chartId);
 
-        crosshairState.xVal          = snappedXVal;
+        crosshairState.xVal = snappedXVal;
         crosshairState.activeChartId = chartId;
         if (chartId === 'trendChart') {
-            crosshairState.yValTrend  = yVal;
+            crosshairState.yValTrend = yVal;
             crosshairState.yValVolume = null;
         } else {
             crosshairState.yValVolume = yVal;
-            crosshairState.yValTrend  = null;
+            crosshairState.yValTrend = null;
         }
 
         if (!changed) return;   // cursor still on same bar — skip repaint
 
         // Throttle redraws to one per animation frame (≈16ms @ 60fps)
         if (_crosshairRafId) cancelAnimationFrame(_crosshairRafId);
-        _crosshairRafId = requestAnimationFrame(function() {
+        _crosshairRafId = requestAnimationFrame(function () {
             _crosshairRafId = null;
             chart.update('none');
             if (otherChart) otherChart.update('none');
         });
     };
-    
+
     const handleMouseLeave = () => {
         if (crosshairState.xVal === null) return;
-        
+
         crosshairState.xVal = null;
         crosshairState.yValTrend = null;
         crosshairState.yValVolume = null;
         crosshairState.activeChartId = null;
-        
+
         if (trendChart) {
             try {
-                if (trendChart.tooltip) trendChart.tooltip.setActiveElements([], {x: 0, y: 0});
+                if (trendChart.tooltip) trendChart.tooltip.setActiveElements([], { x: 0, y: 0 });
                 trendChart.setActiveElements([]);
-            } catch (e) {}
+            } catch (e) { }
             trendChart.update('none');
         }
         if (volumeChart) {
             try {
-                if (volumeChart.tooltip) volumeChart.tooltip.setActiveElements([], {x: 0, y: 0});
+                if (volumeChart.tooltip) volumeChart.tooltip.setActiveElements([], { x: 0, y: 0 });
                 volumeChart.setActiveElements([]);
-            } catch (e) {}
+            } catch (e) { }
             volumeChart.update('none');
         }
     };
-    
+
     trendCanvas.addEventListener('mousemove', (e) => {
         if (trendChart && volumeChart) {
             handleMouseMove(e, 'trendChart', trendChart, volumeChart);
         }
     });
-    
+
     volumeCanvas.addEventListener('mousemove', (e) => {
         if (volumeChart && trendChart) {
             handleMouseMove(e, 'volumeChart', volumeChart, trendChart);
         }
     });
-    
+
     trendCanvas.addEventListener('mouseleave', handleMouseLeave);
     volumeCanvas.addEventListener('mouseleave', handleMouseLeave);
 }
@@ -2462,7 +2667,7 @@ function getHeatmapColor(val) {
     const maxVal = 5.0; // color scales up to 5% change
     const pct = Math.min(Math.abs(val) / maxVal, 1.0);
     const opacity = 0.15 + pct * 0.70; // opacity between 0.15 and 0.85
-    
+
     if (val > 0) {
         return `rgba(38, 166, 154, ${opacity})`; // #26A69A green
     } else {
@@ -2480,25 +2685,25 @@ function updateOverviewSection() {
 function updateIHSGTrendChart() {
     const rawIHSG = pricesData["IHSG"];
     if (!rawIHSG) return;
-    
+
     const resampled = resampleDataset(rawIHSG, heatmapTimeframe);
-    
+
     const N = resampled.length;
     const defaultZoom = getDefaultZoom(N, heatmapTimeframe);
     const minIndex = Math.max(0, N - defaultZoom);
     const sliced = resampled.slice(minIndex);
-    
+
     const dates = sliced.map(item => new Date(item.date).getTime());
     const closeData = sliced.map(item => item.close);
     const ma50Data = sliced.map(item => item.ma50 != null ? item.ma50 : null);
-    
+
     const ctx = document.getElementById('ihsgTrendChart').getContext('2d');
-    
+
     if (ihsgTrendChart) {
         ihsgTrendChart.destroy();
         ihsgTrendChart = null;
     }
-    
+
     ihsgTrendChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -2544,7 +2749,7 @@ function updateIHSGTrendChart() {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    backgroundColor: '#0B0F14',
                     borderColor: 'rgba(255, 255, 255, 0.15)',
                     borderWidth: 1,
                     borderRadius: 6,
@@ -2556,7 +2761,7 @@ function updateIHSGTrendChart() {
                     titleSpacing: 5,
                     bodySpacing: 4,
                     callbacks: {
-                        label: function(context) {
+                        label: function (context) {
                             let label = context.dataset.label || '';
                             if (label) label += ': ';
                             if (context.parsed.y !== null) {
@@ -2597,7 +2802,7 @@ function updateIHSGTrendChart() {
                         color: '#9CA3AF',
                         font: { family: 'Inter', size: 10, weight: '500' },
                         padding: 6,
-                        callback: function(value) { return value.toLocaleString('id-ID'); }
+                        callback: function (value) { return value.toLocaleString('id-ID'); }
                     }
                 }
             }
@@ -2613,48 +2818,72 @@ function updateStockHeatmap() {
     if (!container) return;
     container.innerHTML = '';
 
-    const tickers = ["BBCA", "BBRI", "BMRI", "TLKM", "BREN", "AMMN", "ASII", "ANTM", "UNVR"];
+        const tickers = ["BBCA", "BBRI", "BMRI", "TLKM", "BREN", "AMMN", "ASII", "ANTM", "UNVR", "IHSG"];
 
     // Step 1: Collect return percentages
     const returns = {};
-    tickers.forEach(function(ticker) {
+    tickers.forEach(function (ticker) {
         const rawData = pricesData[ticker];
         if (!rawData) { returns[ticker] = 0; return; }
-        const activeData = rawData.filter(function(item) { return item.active !== false; });
-        const resampled  = resampleDataset(activeData, heatmapTimeframe);
+        const activeData = rawData.filter(function (item) { return item.active !== false; });
+        const resampled = resampleDataset(activeData, heatmapTimeframe);
         let returnPct = 0;
         if (resampled.length > 0) {
             const latestItem = resampled[resampled.length - 1];
-            const prevItem   = resampled[resampled.length - 2] || latestItem;
-            if (prevItem.close !== 0) {
-                returnPct = ((latestItem.close - prevItem.close) / prevItem.close) * 100;
+            const prevItem = resampled[resampled.length - 2] || latestItem;
+
+            // Pembaruan formula per timeframe secara terpisah
+            if (heatmapTimeframe === 'daily') {
+                // Imbal hasil harian dihitung Open-to-Close agar sinkron dengan candle harian TradingView
+                if (latestItem.open !== 0) {
+                    returnPct = ((latestItem.close - latestItem.open) / latestItem.open) * 100;
+                }
+            } else if (heatmapTimeframe === 'weekly') {
+                // Imbal hasil mingguan dihitung Open-to-Close agar sinkron dengan candle mingguan TradingView
+                if (latestItem.open !== 0) {
+                    returnPct = ((latestItem.close - latestItem.open) / latestItem.open) * 100;
+                }
+            } else if (heatmapTimeframe === 'monthly') {
+                // Imbal hasil bulanan dihitung Open-to-Close agar sinkron dengan candle bulanan TradingView
+                if (latestItem.open !== 0) {
+                    returnPct = ((latestItem.close - latestItem.open) / latestItem.open) * 100;
+                }
+            } else if (heatmapTimeframe === 'yearly') {
+                // Imbal hasil tahunan dihitung Open-to-Close agar sinkron dengan candle tahunan TradingView
+                if (latestItem.open !== 0) {
+                    returnPct = ((latestItem.close - latestItem.open) / latestItem.open) * 100;
+                }
             }
         }
         returns[ticker] = returnPct;
     });
 
     // Step 2: Define the 6 column groups dynamically
-    // Sort all 9 tickers based on absolute return value (ascending)
-    const sortedTickers = tickers.slice().sort(function(a, b) {
-        return Math.abs(returns[a]) - Math.abs(returns[b]);
+    // Sort all 10 tickers based on actual return value (ascending: from negative to positive)
+    const sortedTickers = tickers.slice().sort(function (a, b) {
+        return returns[a] - returns[b];
     });
 
     const MIN_WEIGHT = 0.12;
-    // We want 6 columns. 3 columns will be pairs (2 stocks each) and 3 will be solos (1 stock each).
-    // To place the smallest changes on the left and the largest on the right:
-    // Columns 1, 2, 3 (left side) will be pairs of the first 6 sorted tickers (smallest absolute returns).
-    // Columns 4, 5, 6 (right side) will be solos of the last 3 sorted tickers (largest absolute returns).
+    // We want 6 columns. With 10 stocks:
+    // Column 1 (far left, most negative): Solo
+    // Column 2 (negative): Pair
+    // Column 3 (near zero, negative): Pair
+    // Column 4 (near zero, positive): Pair
+    // Column 5 (positive): Pair
+    // Column 6 (far right, most positive): Solo
+    // Total: 1 + 2 + 2 + 2 + 2 + 1 = 10 stocks.
     const groups = [
-        { id: sortedTickers[0] + '_' + sortedTickers[1], type: 'pair', stocks: [sortedTickers[0], sortedTickers[1]] },
-        { id: sortedTickers[2] + '_' + sortedTickers[3], type: 'pair', stocks: [sortedTickers[2], sortedTickers[3]] },
-        { id: sortedTickers[4] + '_' + sortedTickers[5], type: 'pair', stocks: [sortedTickers[4], sortedTickers[5]] },
-        { id: sortedTickers[6],                           type: 'solo', stocks: [sortedTickers[6]] },
-        { id: sortedTickers[7],                           type: 'solo', stocks: [sortedTickers[7]] },
-        { id: sortedTickers[8],                           type: 'solo', stocks: [sortedTickers[8]] }
+        { id: sortedTickers[0], type: 'solo', stocks: [sortedTickers[0]] },
+        { id: sortedTickers[1] + '_' + sortedTickers[2], type: 'pair', stocks: [sortedTickers[1], sortedTickers[2]] },
+        { id: sortedTickers[3] + '_' + sortedTickers[4], type: 'pair', stocks: [sortedTickers[3], sortedTickers[4]] },
+        { id: sortedTickers[5] + '_' + sortedTickers[6], type: 'pair', stocks: [sortedTickers[5], sortedTickers[6]] },
+        { id: sortedTickers[7] + '_' + sortedTickers[8], type: 'pair', stocks: [sortedTickers[7], sortedTickers[8]] },
+        { id: sortedTickers[9], type: 'solo', stocks: [sortedTickers[9]] }
     ];
 
     // Compute weights for each group
-    groups.forEach(function(g) {
+    groups.forEach(function (g) {
         if (g.type === 'solo') {
             g.weight = Math.max(MIN_WEIGHT, Math.abs(returns[g.stocks[0]]));
         } else {
@@ -2662,12 +2891,11 @@ function updateStockHeatmap() {
         }
     });
 
-    // Step 3: Sort ascending by weight (smallest left, largest right)
-    groups.sort(function(a, b) { return a.weight - b.weight; });
+    // Step 3: Keep the predefined sorted order (minus to plus) and do not sort by weight
 
     // Step 4: Build grid-template-columns proportional to each column weight
-    const totalWeight = groups.reduce(function(sum, g) { return sum + g.weight; }, 0);
-    const colFr = groups.map(function(g) { return ((g.weight / totalWeight) * 100).toFixed(2) + 'fr'; }).join(' ');
+    const totalWeight = groups.reduce(function (sum, g) { return sum + g.weight; }, 0);
+    const colFr = groups.map(function (g) { return ((g.weight / totalWeight) * 100).toFixed(2) + 'fr'; }).join(' ');
     container.style.gridTemplateColumns = colFr;
 
     // Step 5: Build grid-template-rows — clamp pair row split to [25%, 75%]
@@ -2676,11 +2904,11 @@ function updateStockHeatmap() {
     const MIN_ROW_PCT = 25;
     const MAX_ROW_PCT = 75;
     let topFrSum = 0, botFrSum = 0, pairCount = 0;
-    groups.forEach(function(g) {
+    groups.forEach(function (g) {
         if (g.type === 'pair') {
             const wTop = Math.max(MIN_WEIGHT, Math.abs(returns[g.stocks[0]]));
             const wBot = Math.max(MIN_WEIGHT, Math.abs(returns[g.stocks[1]]));
-            const rawTop     = (wTop / (wTop + wBot)) * 100;
+            const rawTop = (wTop / (wTop + wBot)) * 100;
             const clampedTop = Math.min(MAX_ROW_PCT, Math.max(MIN_ROW_PCT, rawTop));
             topFrSum += clampedTop;
             botFrSum += (100 - clampedTop);
@@ -2693,7 +2921,7 @@ function updateStockHeatmap() {
 
     // Step 6: Assign grid areas from sorted column positions
     const gridAreas = {};
-    groups.forEach(function(g, colIdx) {
+    groups.forEach(function (g, colIdx) {
         const col = colIdx + 1;
         if (g.type === 'solo') {
             gridAreas[g.stocks[0]] = '1 / ' + col + ' / 3 / ' + (col + 1);
@@ -2704,23 +2932,23 @@ function updateStockHeatmap() {
     });
 
     // Step 7: Render blocks
-    tickers.forEach(function(ticker, index) {
+    tickers.forEach(function (ticker, index) {
         const returnPct = returns[ticker];
-        const color     = getHeatmapColor(returnPct);
-        const sign      = returnPct >= 0 ? '+' : '';
-        const pctText   = sign + returnPct.toFixed(2) + '%';
-        const absVal    = Math.abs(returnPct);
+        const color = getHeatmapColor(returnPct);
+        const sign = returnPct >= 0 ? '+' : '';
+        const pctText = sign + returnPct.toFixed(2) + '%';
+        const absVal = Math.abs(returnPct);
         const fontScale = Math.min(1.4, 0.9 + (absVal / 5) * 0.5);
-        const pctScale  = Math.min(1.25, 0.8 + (absVal / 5) * 0.45);
+        const pctScale = Math.min(1.25, 0.8 + (absVal / 5) * 0.45);
 
         const block = document.createElement('div');
         block.className = 'heatmap-block heatmap-block-anim';
         block.style.gridArea = gridAreas[ticker];
         block.style.backgroundColor = color;
-        
+
         // Ensure perfect sorting order in mobile/tablet grids where grid-area is overridden
         block.style.order = sortedTickers.indexOf(ticker);
-        
+
         // Stagger the CSS pop-in animation delay
         block.style.animationDelay = (index * 60) + 'ms';
 
@@ -2738,7 +2966,8 @@ function updateStockHeatmap() {
         block.appendChild(pctDiv);
         block.title = ticker + ': ' + pctText;
 
-        block.addEventListener('click', function() {
+        block.addEventListener('click', function () {
+            if (ticker === 'IHSG') return;
             const stockSelect = document.getElementById('stock-select');
             if (stockSelect) {
                 stockSelect.value = ticker;
@@ -2751,9 +2980,9 @@ function updateStockHeatmap() {
         });
 
         container.appendChild(block);
-        
+
         // Start count-up animation stagger after the grid columns transition (600ms) completes
-        setTimeout(function() {
+        setTimeout(function () {
             animateValue(pctDiv, 0, returnPct, 1500, 2, '', '%');
         }, 600 + (index * 60));
     });
@@ -2762,11 +2991,11 @@ function updateStockHeatmap() {
 // Global timeline scaling drag handlers for premium user interaction (TradingView Style)
 window.addEventListener('mousemove', (e) => {
     if (!activeScalingChart) return;
-    
+
     const chart = activeScalingChart;
     const dx = e.clientX - chart._scaleStartX;
     const width = chart.width || 300;
-    
+
     // Drag left = zoom out (show more history), drag right = zoom in (show less history)
     const factor = Math.exp(-dx / width * 1.5);
     let newRange = chart._scaleStartRange * factor;
@@ -2776,20 +3005,20 @@ window.addEventListener('mousemove', (e) => {
         const data = datasets[0].data;
         const totalN = data.length;
         const isTimeScale = chart.options.scales.x.type === 'timeseries' || chart.options.scales.x.type === 'time';
-        
+
         let targetMin, targetMax;
-        
+
         if (isTimeScale) {
             const latestTime = (data[data.length - 1] && data[data.length - 1].x) || (chart.data.labels && chart.data.labels[chart.data.labels.length - 1]);
             const firstTime = (data[0] && data[0].x) || (chart.data.labels && chart.data.labels[0]);
             if (latestTime && firstTime) {
                 const totalDuration = latestTime - firstTime;
                 const avgPointDuration = totalDuration / totalN;
-                
+
                 const minRange = avgPointDuration * 5; // minimum 5 bars
                 const maxRange = totalDuration;
                 newRange = Math.max(minRange, Math.min(maxRange, newRange));
-                
+
                 targetMax = latestTime;
                 targetMin = latestTime - newRange;
             }
@@ -2797,20 +3026,20 @@ window.addEventListener('mousemove', (e) => {
             const minRange = 5;
             const maxRange = totalN - 1;
             newRange = Math.max(minRange, Math.min(maxRange, newRange));
-            
+
             const latestIdx = totalN - 1;
             targetMax = latestIdx;
             targetMin = Math.max(0, latestIdx - Math.round(newRange));
         }
-        
+
         // Throttle scaling updates to screen refresh rate via requestAnimationFrame
         if (_scalingRafId) cancelAnimationFrame(_scalingRafId);
         _scalingRafId = requestAnimationFrame(() => {
             _scalingRafId = null;
-            
+
             chart.options.scales.x.min = targetMin;
             chart.options.scales.x.max = targetMax;
-            
+
             autoScaleY(chart);
             chart.update('none');
 
@@ -2854,10 +3083,10 @@ function setupXAxisDrag(chart) {
         if (chart.chartArea && y > chart.chartArea.bottom && x >= chart.chartArea.left && x <= chart.chartArea.right) {
             activeScalingChart = chart;
             chart._scaleStartX = e.clientX;
-            
+
             const xScale = chart.scales.x;
             chart._scaleStartRange = xScale.max - xScale.min;
-            
+
             // Temporarily disable the panning plugin to prevent default drag-pan behavior
             if (chart.options.plugins.zoom) {
                 chart._panWasEnabled = chart.options.plugins.zoom.pan.enabled;
@@ -2875,7 +3104,7 @@ function setupXAxisDrag(chart) {
             }
             chart.setActiveElements([]);
             chart.update('none');
-        } catch (e) {}
+        } catch (e) { }
     });
 }
 
@@ -2897,19 +3126,19 @@ function setupChartActions() {
 function exportChartToPNG(chartId, filename) {
     const canvas = document.getElementById(chartId);
     if (!canvas) return;
-    
+
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = canvas.width;
     tempCanvas.height = canvas.height;
     const ctx = tempCanvas.getContext('2d');
-    
+
     // Fill solid card background matching #0B0F14
     ctx.fillStyle = '#0B0F14';
     ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-    
+
     // Draw chart canvas content on top
     ctx.drawImage(canvas, 0, 0);
-    
+
     const link = document.createElement('a');
     link.download = filename + '.png';
     link.href = tempCanvas.toDataURL('image/png');
@@ -2921,16 +3150,16 @@ function exportChartToPNG(chartId, filename) {
 // Convert active dataset series into CSV strings for tabular downloads
 function exportChartToCSV(chart, filename) {
     if (!chart || !chart.data || !chart.data.datasets) return;
-    
+
     let csvContent = "\uFEFF"; // Add UTF-8 Byte Order Mark (BOM) to force proper Excel rendering
-    
+
     if (chart === relativeChart) {
         const labels = chart.data.labels || [];
         const datasets = chart.data.datasets;
-        
+
         const headers = ["Date", ...datasets.map(ds => ds.label)];
         csvContent += headers.join(",") + "\n";
-        
+
         for (let i = 0; i < labels.length; i++) {
             const dateStr = labels[i];
             const row = [dateStr];
@@ -2940,21 +3169,21 @@ function exportChartToCSV(chart, filename) {
             });
             csvContent += row.join(",") + "\n";
         }
-    } 
+    }
     else if (chart === trendChart) {
         const ohlcDataset = chart.data.datasets[0];
         const ma20Dataset = chart.data.datasets[1];
         const ma50Dataset = chart.data.datasets[2];
-        
+
         const data = ohlcDataset ? ohlcDataset.data : [];
-        
+
         csvContent += "Date,Open,High,Low,Close,MA20,MA50\n";
-        
+
         data.forEach((item, idx) => {
             const dateStr = new Date(item.x).toISOString().split('T')[0];
             const ma20 = ma20Dataset && ma20Dataset.data[idx] ? ma20Dataset.data[idx].y : "";
             const ma50 = ma50Dataset && ma50Dataset.data[idx] ? ma50Dataset.data[idx].y : "";
-            
+
             const row = [
                 dateStr,
                 item.o.toFixed(2),
@@ -2971,17 +3200,17 @@ function exportChartToCSV(chart, filename) {
         const macdDataset = chart.data.datasets[0];
         const signalDataset = chart.data.datasets[1];
         const histDataset = chart.data.datasets[2];
-        
+
         const data = macdDataset ? macdDataset.data : [];
-        
+
         csvContent += "Date,MACD_Line,Signal_Line,Histogram\n";
-        
+
         data.forEach((item, idx) => {
             const dateStr = new Date(item.x).toISOString().split('T')[0];
             const macd = item.y;
             const signal = signalDataset && signalDataset.data[idx] ? signalDataset.data[idx].y : "";
             const hist = histDataset && histDataset.data[idx] ? histDataset.data[idx].y : "";
-            
+
             const row = [
                 dateStr,
                 macd !== null && macd !== undefined ? macd.toFixed(4) : "",
@@ -2991,7 +3220,7 @@ function exportChartToCSV(chart, filename) {
             csvContent += row.join(",") + "\n";
         });
     }
-    
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
@@ -3000,4 +3229,16 @@ function exportChartToCSV(chart, filename) {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+}
+
+// Function to dynamically align Mulai Tahun dropdown width with Relative Timeframe selector
+function alignStartYearDropdown() {
+    const tfSelector = document.getElementById('relative-timeframe-selector');
+    const startYearWrapper = document.querySelector('.start-year-wrapper');
+    if (tfSelector && startYearWrapper) {
+        const tfWidth = tfSelector.offsetWidth;
+        if (tfWidth > 0) {
+            startYearWrapper.style.width = `${tfWidth}px`;
+        }
+    }
 }

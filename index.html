@@ -57,7 +57,7 @@
             <!-- KPI 2: Status Pasar -->
             <div class="card kpi-card" id="kpi-status-card">
                 <div class="kpi-header">
-                    <span class="kpi-title">Status Pasar</span>
+                    <span class="kpi-title">Status Pasar Weekly</span>
                     <div class="kpi-icon-container">
                         <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                             xmlns="http://www.w3.org/2000/svg">
@@ -74,7 +74,7 @@
             <!-- KPI 3: Top Outperformer -->
             <div class="card kpi-card" id="kpi-outperformer-card">
                 <div class="kpi-header">
-                    <span class="kpi-title">Top Outperformer</span>
+                    <span class="kpi-title">Top Outperformer Weekly</span>
                     <div class="kpi-icon-container text-success">
                         <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                             xmlns="http://www.w3.org/2000/svg">
@@ -85,13 +85,13 @@
                     </div>
                 </div>
                 <div class="kpi-value text-success" id="kpi-outperformer-val">-</div>
-                <div class="kpi-footer">Performa Terbaik vs IHSG</div>
+                <div class="kpi-footer">Performa Terbaik vs IHSG (Weekly)</div>
             </div>
 
             <!-- KPI 4: Top Underperformer -->
             <div class="card kpi-card" id="kpi-underperformer-card">
                 <div class="kpi-header">
-                    <span class="kpi-title">Top Underperformer</span>
+                    <span class="kpi-title">Top Underperformer Weekly</span>
                     <div class="kpi-icon-container text-danger">
                         <svg class="kpi-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                             xmlns="http://www.w3.org/2000/svg">
@@ -102,7 +102,7 @@
                     </div>
                 </div>
                 <div class="kpi-value text-danger" id="kpi-underperformer-val">-</div>
-                <div class="kpi-footer">Performa Terendah vs IHSG</div>
+                <div class="kpi-footer">Performa Terendah vs IHSG (Weekly)</div>
             </div>
         </section>
 
@@ -144,6 +144,19 @@
                         <div id="stock-heatmap" class="heatmap-container">
                             <!-- Stock blocks will be rendered here dynamically -->
                         </div>
+                        <div class="heatmap-legend">
+                            <span class="legend-label label-negative">-</span>
+                            <div class="legend-scale-bar">
+                                <div class="scale-step step-neg-3" title="Turun > 3%"></div>
+                                <div class="scale-step step-neg-2" title="Turun 1% - 3%"></div>
+                                <div class="scale-step step-neg-1" title="Turun < 1%"></div>
+                                <div class="scale-step step-neutral" title="Netral (0%)"></div>
+                                <div class="scale-step step-pos-1" title="Naik < 1%"></div>
+                                <div class="scale-step step-pos-2" title="Naik 1% - 3%"></div>
+                                <div class="scale-step step-pos-3" title="Naik > 3%"></div>
+                            </div>
+                            <span class="legend-label label-positive">+</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -155,28 +168,37 @@
                 <div class="card-header">
                     <div>
                         <h2>Performa Relatif Saham terhadap IHSG</h2>
-                        <p class="card-subtitle">Perbandingan imbal hasil kumulatif saham terhadap IHSG (Skala
+                        <p class="card-subtitle" id="relative-chart-subtitle">Perbandingan imbal hasil kumulatif saham
+                            terhadap IHSG (Skala
                             Persentase, Dimulai dari 10 tahun lalu)</p>
                     </div>
-                    <div class="filter-group">
-                        <span class="filter-label">Timeframe:</span>
-                        <div class="timeframe-buttons" id="relative-timeframe-selector">
-                            <button class="tf-btn active" data-tf="daily">Daily</button>
-                            <button class="tf-btn" data-tf="weekly">Weekly</button>
-                            <button class="tf-btn" data-tf="monthly">Monthly</button>
-                            <button class="tf-btn" data-tf="yearly">Yearly</button>
+                    <div class="relative-controls-container">
+                        <div class="filter-group">
+                            <span class="filter-label">Timeframe:</span>
+                            <div class="timeframe-buttons" id="relative-timeframe-selector">
+                                <button class="tf-btn active" data-tf="daily">Daily</button>
+                                <button class="tf-btn" data-tf="weekly">Weekly</button>
+                                <button class="tf-btn" data-tf="monthly">Monthly</button>
+                                <button class="tf-btn" data-tf="yearly">Yearly</button>
+                            </div>
+
                         </div>
-                        <div class="chart-actions">
-                            <button class="export-btn export-png" data-chart="relativePerformanceChart"
-                                title="Unduh Gambar (PNG)">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-                                    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                    <path
-                                        d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z">
-                                    </path>
-                                    <circle cx="12" cy="13" r="4"></circle>
-                                </svg>
-                            </button>
+                        <div class="filter-group start-year-group">
+                            <span class="filter-label">Mulai Tahun:</span>
+                            <div class="select-wrapper start-year-wrapper">
+                                <select id="start-year-select" class="styled-select start-year-select">
+                                    <option value="all">2016</option>
+                                    <option value="2017">2017</option>
+                                    <option value="2018">2018</option>
+                                    <option value="2019">2019</option>
+                                    <option value="2020">2020</option>
+                                    <option value="2021">2021</option>
+                                    <option value="2022">2022</option>
+                                    <option value="2023">2023</option>
+                                    <option value="2024">2024</option>
+                                    <option value="2025">2025</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -212,8 +234,6 @@
                     <div class="timeframe-buttons" id="timeframe-selector">
                         <button class="tf-btn active" data-tf="daily">Daily</button>
                         <button class="tf-btn" data-tf="weekly">Weekly</button>
-                        <button class="tf-btn" data-tf="monthly">Monthly</button>
-                        <button class="tf-btn" data-tf="yearly">Yearly</button>
                     </div>
                 </div>
             </div>
@@ -241,19 +261,7 @@
                                 </svg>
                                 <span>Ruler</span>
                             </button>
-                            <!-- Export Buttons -->
-                            <div class="chart-actions">
-                                <button class="export-btn export-png" data-chart="trendChart"
-                                    title="Unduh Gambar (PNG)">
-                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-                                        stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                        <path
-                                            d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z">
-                                        </path>
-                                        <circle cx="12" cy="13" r="4"></circle>
-                                    </svg>
-                                </button>
-                            </div>
+
                         </div>
                     </div>
                     <div class="chart-container">
@@ -269,17 +277,7 @@
                             <p class="card-subtitle">Moving Average Convergence Divergence (MACD) digunakan untuk
                                 mengidentifikasi kekuatan dan arah momentum tren harga saham.</p>
                         </div>
-                        <div class="chart-actions">
-                            <button class="export-btn export-png" data-chart="volumeChart" title="Unduh Gambar (PNG)">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-                                    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                    <path
-                                        d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z">
-                                    </path>
-                                    <circle cx="12" cy="13" r="4"></circle>
-                                </svg>
-                            </button>
-                        </div>
+
                     </div>
                     <div class="chart-container">
                         <canvas id="volumeChart"></canvas>
