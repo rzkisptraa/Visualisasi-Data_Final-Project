@@ -298,6 +298,7 @@ body {
     letter-spacing: -0.02em;
     color: var(--text-primary);
     margin: 4px 0;
+    font-variant-numeric: tabular-nums;
 }
 
 .kpi-footer {
@@ -868,6 +869,7 @@ canvas {
     font-size: 0.95rem;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.95);
+    font-variant-numeric: tabular-nums;
 }
 
 /* Adjust responsive for overview grid */

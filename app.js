@@ -2752,10 +2752,10 @@ function updateStockHeatmap() {
 
         container.appendChild(block);
         
-        // Start count-up animation stagger aligned with CSS pop-in delay
+        // Start count-up animation stagger after the grid columns transition (600ms) completes
         setTimeout(function() {
             animateValue(pctDiv, 0, returnPct, 1500, 2, '', '%');
-        }, index * 60);
+        }, 600 + (index * 60));
     });
 }
 
