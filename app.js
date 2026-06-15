@@ -386,6 +386,11 @@ function setupKPIs() {
     var topOutEl = document.getElementById('kpi-outperformer-val');
     if (topOutEl && topOutTicker) {
         topOutEl.innerHTML = topOutTicker + ' <span id="top-out-pct">( 0,0%)</span>';
+        if (topOutVal >= 0) {
+            topOutEl.className = 'kpi-value text-success';
+        } else {
+            topOutEl.className = 'kpi-value text-danger';
+        }
         triggerCountup(topOutEl, STAGGER[2]);
         setTimeout(function () {
             animateValue('top-out-pct', 0, topOutVal, COUNT_DURATION, 1, '(', '%)');
@@ -396,6 +401,11 @@ function setupKPIs() {
     var topUnderEl = document.getElementById('kpi-underperformer-val');
     if (topUnderEl && topUnderTicker) {
         topUnderEl.innerHTML = topUnderTicker + ' <span id="top-under-pct">( 0,0%)</span>';
+        if (topUnderVal >= 0) {
+            topUnderEl.className = 'kpi-value text-success';
+        } else {
+            topUnderEl.className = 'kpi-value text-danger';
+        }
         triggerCountup(topUnderEl, STAGGER[3]);
         setTimeout(function () {
             animateValue('top-under-pct', 0, topUnderVal, COUNT_DURATION, 1, '(', '%)');
