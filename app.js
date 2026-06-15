@@ -894,6 +894,12 @@ function renderRelativeChart() {
                         const index = legendItem.datasetIndex;
                         const ci = legend.chart;
 
+                        // Temporarily enable smooth animations for this update
+                        ci.options.animation = {
+                            duration: 500,
+                            easing: 'easeOutCubic'
+                        };
+
                         if (ci.isDatasetVisible(index)) {
                             ci.hide(index);
                             legendItem.hidden = true;
@@ -904,6 +910,13 @@ function renderRelativeChart() {
 
                         autoScaleY(ci);
                         ci.update();
+
+                        // Reset animation to false after transition finishes to keep drag scaling crisp
+                        setTimeout(() => {
+                            if (ci && ci.options) {
+                                ci.options.animation = false;
+                            }
+                        }, 550);
                     }
                 },
                 tooltip: {
