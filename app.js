@@ -1723,6 +1723,7 @@ function updateMACDChart(resampled, initialMin, initialMax) {
     ];
 
     volumeChart = new Chart(ctx, {
+        type: 'bar',
         data: { datasets: datasets },
         plugins: [crosshairPlugin],
         options: {
