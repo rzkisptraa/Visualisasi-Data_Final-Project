@@ -1,0 +1,13 @@
+{
+  "name": "indonesia-market-dashboard",
+  "version": "1.0.0",
+  "description": "Dashboard Analisis Performa Saham Indonesia terhadap IHSG",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx -y http-server -p 3000"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
