@@ -216,9 +216,9 @@ function updateStockHeatmap() {
             const latestItem = resampled[resampled.length - 1];
             const prevItem = resampled[resampled.length - 2] || latestItem;
 
-            // Pembaruan formula per timeframe secara terpisah (Mengikuti Logic TradingView Open-to-Close)
-            if (latestItem && latestItem.open !== 0) {
-                returnPct = ((latestItem.close - latestItem.open) / latestItem.open) * 100;
+            // Formula standar: perubahan Close-to-Close (close hari ini vs close periode sebelumnya)
+            if (prevItem && prevItem.close !== 0) {
+                returnPct = ((latestItem.close - prevItem.close) / prevItem.close) * 100;
             }
         }
         returns[ticker] = returnPct;
